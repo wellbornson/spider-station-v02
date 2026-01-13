@@ -1,0 +1,16 @@
+{
+  "pkg": {
+    "targets": [
+      "node18-win-x64"
+    ],
+    "assets": [
+      "dist/**/*",
+      "public/**/*",
+      "package.json",
+      "next.config.js",
+      "tsconfig.json",
+      ".next/**/*"
+    ],
+    "outputPath": "dist"
+  }
+}

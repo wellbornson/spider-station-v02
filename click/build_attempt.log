@@ -1,0 +1,48 @@
+STDOUT: 
+> click-management-system@0.1.0 build
+> next build
+
+
+STDOUT:   ▲ Next.js 14.2.15
+
+STDOUT: 
+
+STDOUT:    Creating an optimized production build ...
+
+STDOUT:  ✓ Compiled successfully
+
+STDOUT:    Linting and checking validity of types ...
+
+STDOUT:    Collecting page data ...
+
+STDOUT:    Generating static pages (0/6) ...
+
+STDOUT:    Generating static pages (1/6) 
+
+STDOUT:    Generating static pages (2/6) 
+
+STDOUT:    Generating static pages (4/6) 
+
+STDOUT:  ✓ Generating static pages (6/6)
+
+STDOUT:    Finalizing page optimization ...
+
+STDOUT:    Collecting build traces ...
+
+STDOUT: 
+
+STDOUT: Route (app)                              Size     First Load JS
+┌ ○ /                                    93.4 kB         230 kB
+├ ○ /_not-found                          872 B          88.1 kB
+└ ○ /admin-stats                         2.71 kB         139 kB
++ First Load JS shared by all            87.2 kB
+  ├ chunks/117-4140e3c601b33f38.js       31.6 kB
+  ├ chunks/fd9d1056-8fef90fb5a0b2194.js  53.6 kB
+  └ other shared chunks (total)          1.95 kB
+
+
+STDOUT: 
+○  (Static)  prerendered as static content
+
+
+Build process exited with code 0

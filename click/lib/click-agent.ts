@@ -3,7 +3,7 @@ import OpenAI from 'openai';
 // Initialize OpenAI client
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
-  dangerouslyAllowBrowser: true // Note: Ideally use server actions for security
+  dangerouslyAllowBrowser: true // For browser compatibility
 });
 
 interface GridDataPoint {
@@ -23,7 +23,7 @@ export async function runAgent(messages: { role: string; content: string }[]) {
     });
     return response.choices[0].message.content;
   } catch (error) {
-    console.error("Agent Error:", error);
+    // Agent Error
     return "Sorry, I encountered an error. Please check your API key.";
   }
 }
@@ -68,7 +68,7 @@ export class ClickAgent {
       };
 
     } catch (error) {
-      console.error("AI Analysis failed:", error);
+      // AI Analysis failed
       // Fallback to basic stats
       return {
         totalAmount,

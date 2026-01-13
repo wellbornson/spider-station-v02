@@ -1,15 +1,34 @@
 "use client";
 import React, { useState, useEffect } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/lib/db';
 import { Plus, Trash2 } from 'lucide-react';
 import { format } from 'date-fns';
 
 export default function UserSheet({ onSelectionChange }: { onSelectionChange: (sum: number) => void }) {
-  const users = useLiveQuery(() => db.user.orderBy('date').reverse().toArray());
+  const [users, setUsers] = useState<any[]>([]);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [newDesc, setNewDesc] = useState("");
   const [newAmount, setNewAmount] = useState("");
+
+  useEffect(() => {
+    const fetchUsers = async () => {
+      try {
+        const data = await db.getAllUserEntries();
+        // Sort by date in descending order (most recent first)
+        const sortedData = data.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        setUsers(sortedData);
+      } catch (error) {
+        // Error fetching user entries
+      }
+    };
+
+    fetchUsers();
+
+    // Set up a simple interval to refresh data periodically
+    const interval = setInterval(fetchUsers, 5000); // Refresh every 5 seconds
+
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     if (!users) return;
@@ -22,7 +41,7 @@ export default function UserSheet({ onSelectionChange }: { onSelectionChange: (s
   const addEntry = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newAmount || !newDesc) return;
-    await db.user.add({
+    await db.addUserEntry({
       date: new Date().toISOString(),
       description: newDesc,
       amount: parseFloat(newAmount),

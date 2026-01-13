@@ -2,22 +2,62 @@
 
 @layer base {
   body {
-    @apply bg-[#020617] text-white;
+    @apply bg-[#020617] text-white overflow-x-hidden;
+    touch-action: pan-y;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
   }
-  
+
   /* Classic Form Style Inputs */
   input {
     @apply bg-transparent text-white border-b border-slate-700 outline-none px-1 w-full font-mono text-sm transition-colors;
   }
-  
+
   input:focus {
     @apply border-cyan-400 bg-cyan-950/20;
   }
 
   /* Remove number spinner */
-  input[type=number]::-webkit-inner-spin-button, 
-  input[type=number]::-webkit-outer-spin-button { 
-    -webkit-appearance: none; 
-    margin: 0; 
+  input[type=number]::-webkit-inner-spin-button,
+  input[type=number]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
   }
+}
+
+/* Mobile-specific styles to improve touch experience */
+@media (max-width: 768px) {
+  body {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: none;
+  }
+
+  /* Prevent elastic scrolling on iOS */
+  html, body {
+    -webkit-overflow-scrolling: touch;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  /* Specific container for scrolling content */
+  .mobile-scroll-container {
+    -webkit-overflow-scrolling: touch;
+    overflow-y: auto;
+  }
+}
+
+/* Additional styles to prevent bounce and improve mobile experience */
+html, body {
+  overscroll-behavior: none;
+  -webkit-overscroll-behavior: none;
+}
+
+/* Prevent bounce on scroll containers */
+.scroll-container {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: none;
+  -webkit-overscroll-behavior: none;
 }

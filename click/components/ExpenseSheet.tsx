@@ -1,6 +1,5 @@
 "use client";
-import React, { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
+import React, { useState, useEffect } from 'react';
 import { db } from '@/lib/db';
 import { PieChart, Zap, Home, Wrench, MoreHorizontal, Plus } from 'lucide-react';
 import { format } from 'date-fns';
@@ -13,7 +12,27 @@ const CATEGORIES = [
 ] as const;
 
 export default function ExpenseSheet() {
-  const expenses = useLiveQuery(() => db.expense.orderBy('date').reverse().toArray());
+  const [expenses, setExpenses] = useState<any[]>([]);
+
+  useEffect(() => {
+    const fetchExpenses = async () => {
+      try {
+        const data = await db.getAllExpenseEntries();
+        // Sort by date in descending order (most recent first)
+        const sortedData = data.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        setExpenses(sortedData);
+      } catch (error) {
+        // Error fetching expense entries
+      }
+    };
+
+    fetchExpenses();
+
+    // Set up a simple interval to refresh data periodically
+    const interval = setInterval(fetchExpenses, 5000); // Refresh every 5 seconds
+
+    return () => clearInterval(interval);
+  }, []);
   const [desc, setDesc] = useState("");
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState<typeof CATEGORIES[number]['name']>('Others');
@@ -21,7 +40,7 @@ export default function ExpenseSheet() {
   const addExpense = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!amount || !desc) return;
-    await db.expense.add({
+    await db.addExpenseEntry({
       date: new Date().toISOString(),
       category,
       description: desc,

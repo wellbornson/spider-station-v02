@@ -1,6 +1,3 @@
-// Simple client-side database using localStorage
-// This replaces the Dexie-based implementation to avoid browser compatibility issues
-
 // Define interfaces for data types
 export interface UserEntry {
   id?: number;
@@ -58,6 +55,9 @@ export interface DashboardData {
   sync_status?: 'pending' | 'synced' | 'failed' | null; // Sync status (allowing null for force reset)
 }
 
+// For browser environments, we'll use localStorage as our persistent storage
+// For server environments, we'll eventually use file system (but not implemented here for Next.js compatibility)
+
 // Storage keys for different data types
 const USER_DATA_KEY = 'CLICK_CAFE_USERS';
 const WORKER_DATA_KEY = 'CLICK_CAFE_WORKERS';
@@ -85,10 +85,9 @@ function initializeLocalStorageData() {
 // Call initialization
 initializeLocalStorageData();
 
-// Simple wrapper around localStorage operations
-export class ClickDatabase {
+export class LocalDataStorage {
   // Read data from localStorage
-  private readDataFromStorage(key: string): any[] {
+  private static readDataFromStorage(key: string): any[] {
     if (typeof window === 'undefined') {
       // Server-side - return empty array
       return [];
@@ -103,7 +102,7 @@ export class ClickDatabase {
   }
 
   // Write data to localStorage
-  private writeDataToStorage(key: string, data: any[]): void {
+  private static writeDataToStorage(key: string, data: any[]): void {
     if (typeof window === 'undefined') {
       // Server-side - skip storage operations
       return;
@@ -117,11 +116,11 @@ export class ClickDatabase {
   }
 
   // User entries
-  async getAllUserEntries(): Promise<UserEntry[]> {
+  static async getAllUserEntries(): Promise<UserEntry[]> {
     return this.readDataFromStorage(USER_DATA_KEY);
   }
 
-  async addUserEntry(entry: Omit<UserEntry, 'id'>): Promise<number> {
+  static async addUserEntry(entry: Omit<UserEntry, 'id'>): Promise<number> {
     const entries = await this.getAllUserEntries();
     const newId = entries.length > 0 ? Math.max(...entries.map(e => e.id || 0)) + 1 : 1;
     const newEntry = { ...entry, id: newId };
@@ -131,11 +130,11 @@ export class ClickDatabase {
   }
 
   // Worker entries
-  async getAllWorkerEntries(): Promise<WorkerEntry[]> {
+  static async getAllWorkerEntries(): Promise<WorkerEntry[]> {
     return this.readDataFromStorage(WORKER_DATA_KEY);
   }
 
-  async addWorkerEntry(entry: Omit<WorkerEntry, 'id'>): Promise<number> {
+  static async addWorkerEntry(entry: Omit<WorkerEntry, 'id'>): Promise<number> {
     const entries = await this.getAllWorkerEntries();
     const newId = entries.length > 0 ? Math.max(...entries.map(e => e.id || 0)) + 1 : 1;
     const newEntry = { ...entry, id: newId };
@@ -145,11 +144,11 @@ export class ClickDatabase {
   }
 
   // Expense entries
-  async getAllExpenseEntries(): Promise<ExpenseEntry[]> {
+  static async getAllExpenseEntries(): Promise<ExpenseEntry[]> {
     return this.readDataFromStorage(EXPENSE_DATA_KEY);
   }
 
-  async addExpenseEntry(entry: Omit<ExpenseEntry, 'id'>): Promise<number> {
+  static async addExpenseEntry(entry: Omit<ExpenseEntry, 'id'>): Promise<number> {
     const entries = await this.getAllExpenseEntries();
     const newId = entries.length > 0 ? Math.max(...entries.map(e => e.id || 0)) + 1 : 1;
     const newEntry = { ...entry, id: newId };
@@ -159,11 +158,11 @@ export class ClickDatabase {
   }
 
   // Dashboard data
-  async getAllDashboardData(): Promise<DashboardData[]> {
+  static async getAllDashboardData(): Promise<DashboardData[]> {
     return this.readDataFromStorage(DASHBOARD_DATA_KEY);
   }
 
-  async addDashboardData(data: Omit<DashboardData, 'id'>): Promise<number> {
+  static async addDashboardData(data: Omit<DashboardData, 'id'>): Promise<number> {
     const entries = await this.getAllDashboardData();
     const newId = entries.length > 0 ? Math.max(...entries.map(e => e.id || 0)) + 1 : 1;
     const newData = { ...data, id: newId };
@@ -173,7 +172,7 @@ export class ClickDatabase {
   }
 
   // Get data for a specific date
-  async getDataByDate(date: string): Promise<{ users: UserEntry[], workers: WorkerEntry[], expenses: ExpenseEntry[], dashboard: DashboardData[] }> {
+  static async getDataByDate(date: string): Promise<{ users: UserEntry[], workers: WorkerEntry[], expenses: ExpenseEntry[], dashboard: DashboardData[] }> {
     const users = (await this.getAllUserEntries()).filter(entry => entry.date.startsWith(date));
     const workers = (await this.getAllWorkerEntries()).filter(entry => entry.date.startsWith(date));
     const expenses = (await this.getAllExpenseEntries()).filter(entry => entry.date.startsWith(date));
@@ -183,7 +182,7 @@ export class ClickDatabase {
   }
 
   // Update an existing entry
-  async updateEntry<T>(key: string, id: number, updates: Partial<T>): Promise<boolean> {
+  static async updateEntry<T>(key: string, id: number, updates: Partial<T>): Promise<boolean> {
     if (typeof window === 'undefined') {
       // Server-side - skip storage operations
       return false;
@@ -204,7 +203,7 @@ export class ClickDatabase {
   }
 
   // Get entries by field value
-  async getEntriesByField<T>(key: string, field: string, value: any): Promise<T[]> {
+  static async getEntriesByField<T>(key: string, field: string, value: any): Promise<T[]> {
     if (typeof window === 'undefined') {
       // Server-side - return empty array
       return [];
@@ -217,108 +216,4 @@ export class ClickDatabase {
       return [];
     }
   }
-
-  // Simplified table-like interface for compatibility with existing code
-  table(tableName: string) {
-    switch(tableName) {
-      case 'user':
-        return {
-          toArray: async () => await this.getAllUserEntries(),
-          orderBy: (field: string) => ({
-            reverse: () => ({
-              toArray: async () => {
-                const data = await this.getAllUserEntries();
-                return data.sort((a, b) => (b as any)[field] - (a as any)[field]);
-              }
-            })
-          }),
-          add: async (item: Omit<UserEntry, 'id'>) => await this.addUserEntry(item),
-          where: (field: string) => ({
-            equals: async (value: any) => {
-              const allData = await this.getAllUserEntries();
-              return allData.filter(item => (item as any)[field] === value);
-            },
-            reverse: () => ({
-              toArray: async () => {
-                const allData = await this.getAllUserEntries();
-                return allData.sort((a, b) => (b as any)[field] - (a as any)[field]);
-              }
-            })
-          })
-        };
-      case 'worker':
-        return {
-          toArray: async () => await this.getAllWorkerEntries(),
-          orderBy: (field: string) => ({
-            reverse: () => ({
-              toArray: async () => {
-                const data = await this.getAllWorkerEntries();
-                return data.sort((a, b) => (b as any)[field] - (a as any)[field]);
-              }
-            })
-          }),
-          add: async (item: Omit<WorkerEntry, 'id'>) => await this.addWorkerEntry(item),
-          where: (field: string) => ({
-            equals: async (value: any) => {
-              const allData = await this.getAllWorkerEntries();
-              return allData.filter(item => (item as any)[field] === value);
-            },
-            reverse: () => ({
-              toArray: async () => {
-                const allData = await this.getAllWorkerEntries();
-                return allData.sort((a, b) => (b as any)[field] - (a as any)[field]);
-              }
-            })
-          })
-        };
-      case 'expense':
-        return {
-          toArray: async () => await this.getAllExpenseEntries(),
-          orderBy: (field: string) => ({
-            reverse: () => ({
-              toArray: async () => {
-                const allData = await this.getAllExpenseEntries();
-                return allData.sort((a, b) => (b as any)[field] - (a as any)[field]);
-              }
-            })
-          }),
-          add: async (item: Omit<ExpenseEntry, 'id'>) => await this.addExpenseEntry(item),
-          where: (field: string) => ({
-            equals: async (value: any) => {
-              const allData = await this.getAllExpenseEntries();
-              return allData.filter(item => (item as any)[field] === value);
-            },
-            reverse: () => ({
-              toArray: async () => {
-                const allData = await this.getAllExpenseEntries();
-                return allData.sort((a, b) => (b as any)[field] - (a as any)[field]);
-              }
-            })
-          })
-        };
-      default:
-        return {
-          toArray: async () => [],
-          orderBy: () => ({
-            reverse: () => ({
-              toArray: async () => []
-            })
-          }),
-          add: async () => 0,
-          where: () => ({
-            equals: async () => [],
-            reverse: () => ({
-              toArray: async () => []
-            })
-          })
-        };
-    }
-  }
-
-  // Mock open method for compatibility
-  async open() {
-    // No-op since we don't need to open a connection
-  }
 }
-
-export const db = new ClickDatabase();

@@ -1,12 +1,31 @@
 "use client";
-import React, { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
+import React, { useState, useEffect } from 'react';
 import { db } from '@/lib/db';
 import { User, Wallet, ArrowDownCircle, ArrowUpCircle } from 'lucide-react';
 import { format } from 'date-fns';
 
 export default function WorkerSheet() {
-  const entries = useLiveQuery(() => db.worker.orderBy('date').reverse().toArray());
+  const [entries, setEntries] = useState<any[]>([]);
+
+  useEffect(() => {
+    const fetchEntries = async () => {
+      try {
+        const data = await db.getAllWorkerEntries();
+        // Sort by date in descending order (most recent first)
+        const sortedData = data.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        setEntries(sortedData);
+      } catch (error) {
+        // Error fetching worker entries
+      }
+    };
+
+    fetchEntries();
+
+    // Set up a simple interval to refresh data periodically
+    const interval = setInterval(fetchEntries, 5000); // Refresh every 5 seconds
+
+    return () => clearInterval(interval);
+  }, []);
   const [name, setName] = useState("");
   const [amount, setAmount] = useState("");
   const [type, setType] = useState<'salary' | 'advance'>('salary');
@@ -14,7 +33,7 @@ export default function WorkerSheet() {
   const addEntry = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!amount || !name) return;
-    await db.worker.add({
+    await db.addWorkerEntry({
       date: new Date().toISOString(),
       name,
       type,
