@@ -48,54 +48,66 @@ function saveMonth(y: number, m: number, data: HisabMonthData) {
 
 interface DailySalesResult {
   values: Record<number, number>;
-  synced: Set<number>;   // days where CLICK_NET_SALES (Report Panel) data was used
+  synced: Set<number>; // days where CLICK_NET_SALES (Report Panel) data was used
 }
 
-/** Read daily net sales (gross − inventory) for a given month.
- *  PRIMARY: CLICK_NET_SALES (written by Report Panel whenever netBalance changes).
- *  FALLBACK: raw user-amount sum from masterData (no inventory deduction). */
+/**
+ * Read daily net sales ONLY from CLICK_NET_SALES (Report Panel live sync).
+ * masterData fallback intentionally removed — HISAB only shows data that
+ * was explicitly written by the Report Panel for a given date.
+ */
 function getDailySales(y: number, m: number): DailySalesResult {
   const values: Record<number, number> = {};
   const synced = new Set<number>();
   if (typeof window === 'undefined') return { values, synced };
 
-  let netSales: Record<string, number> = {};
   try {
     const raw = localStorage.getItem('CLICK_NET_SALES');
-    if (raw) netSales = JSON.parse(raw);
-  } catch { /* corrupt — fall through */ }
-
-  try {
-    const raw = localStorage.getItem('CLICK_CAFE_DB_V1');
-    const md = raw ? (JSON.parse(raw)?.masterData ?? {}) : {};
+    if (!raw) return { values, synced };
+    const netSales: Record<string, number> = JSON.parse(raw);
     for (let d = 1; d <= 31; d++) {
       const dateKey = `${y}-${m}-${d}`;
-      if (netSales[dateKey] !== undefined) {
-        if (netSales[dateKey] > 0) { values[d] = netSales[dateKey]; synced.add(d); }
-      } else {
-        const day = md[dateKey];
-        if (day?.users) {
-          const total = (day.users as any[]).reduce((s: number, u: any) => s + (Number(u.amount) || 0), 0);
-          if (total > 0) values[d] = total;
-        }
+      const val = netSales[dateKey];
+      if (val !== undefined && val > 0) {
+        values[d] = val;
+        synced.add(d);
       }
     }
   } catch { /* parse error */ }
+
   return { values, synced };
 }
 
-/** Compute the net closing balance for any given month */
+/** Parse CLICK_SELECTED_DATE (format: year-month0-day) */
+function readSelectedDate(): { year: number; month0: number; day: number } {
+  const now = new Date();
+  const fallback = { year: now.getFullYear(), month0: now.getMonth(), day: now.getDate() };
+  if (typeof window === 'undefined') return fallback;
+  try {
+    const raw = localStorage.getItem('CLICK_SELECTED_DATE');
+    if (raw) {
+      const parts = raw.split('-').map(Number);
+      if (parts.length === 3 && parts.every(n => !isNaN(n))) {
+        const [y, m, d] = parts;
+        return { year: y, month0: m, day: d };
+      }
+    }
+  } catch { /* ignore */ }
+  return fallback;
+}
+
+/** Compute net closing balance for any given month */
 function computeClosing(y: number, m: number): number {
   const data = loadMonth(y, m);
-  const { values: sales } = getDailySales(y, m);
-  const totalSale = Object.values(sales).reduce((s, v) => s + v, 0);
+  const { values: salesVals } = getDailySales(y, m);
+  const totalSale = Object.values(salesVals).reduce((s, v) => s + v, 0);
   const totalPaid = data.records.reduce(
     (s, r) => s + r.payouts.reduce((ps, p) => ps + p.amountPaid, 0), 0
   );
   return data.openingBalance + totalSale - totalPaid;
 }
 
-/** Get previous month's closing balance for carry-forward */
+/** Previous month's closing balance for carry-forward */
 function prevMonthClosing(y: number, m: number): number {
   let py = y, pm = m - 1;
   if (pm < 0) { pm = 11; py--; }
@@ -114,26 +126,30 @@ const MONTHS = [
 //  Page
 // ─────────────────────────────────────────────────────────────
 export default function HisabPage() {
-  const now = new Date();
-  const [year, setYear]     = useState(now.getFullYear());
-  const [month0, setMonth0] = useState(now.getMonth());
-  const [data, setData]         = useState<HisabMonthData>({ records: [], openingBalance: 0 });
-  const [sales, setSales]       = useState<Record<number, number>>({});
-  const [syncedDays, setSyncedDays] = useState<Set<number>>(new Set());
-  const [animKey, setAnimKey]   = useState(0);
-  const [balancePulseKey, setBalancePulseKey] = useState(0);
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const mounted = useRef(false);
+  // ── Init from CLICK_SELECTED_DATE (set by main dashboard) ──
+  const initDate = useRef(readSelectedDate());
 
-  const daysInMonth = new Date(year, month0 + 1, 0).getDate();
-  const todayActual = new Date();
+  const [year, setYear]         = useState(initDate.current.year);
+  const [month0, setMonth0]     = useState(initDate.current.month0);
+  const [activeDay, setActiveDay] = useState(initDate.current.day); // dashboard-selected day
+
+  const [data, setData]             = useState<HisabMonthData>({ records: [], openingBalance: 0 });
+  const [sales, setSales]           = useState<Record<number, number>>({});
+  const [syncedDays, setSyncedDays] = useState<Set<number>>(new Set());
+  const [animKey, setAnimKey]       = useState(0);
+  const [balancePulseKey, setBalancePulseKey] = useState(0);
+  const saveTimer   = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mounted     = useRef(false);
+  const activeDayRef = useRef<HTMLDivElement | null>(null);
+
+  const todayActual    = new Date();
   const isCurrentMonth = year === todayActual.getFullYear() && month0 === todayActual.getMonth();
-  const todayDay = todayActual.getDate();
+  const todayDay       = todayActual.getDate();
+  const daysInMonth    = new Date(year, month0 + 1, 0).getDate();
 
   // ── Load month data ──────────────────────────────────────
   useEffect(() => {
     const loaded = loadMonth(year, month0);
-    // Auto-populate opening balance from previous month if not overridden
     if (!loaded.openingBalance) {
       const carry = prevMonthClosing(year, month0);
       if (carry !== 0) loaded.openingBalance = carry;
@@ -143,8 +159,18 @@ export default function HisabPage() {
     setSales(values);
     setSyncedDays(synced);
     setAnimKey(k => k + 1);
-    mounted.current = false; // mark as fresh load — skip first auto-save
+    mounted.current = false;
   }, [year, month0]);
+
+  // ── Scroll active day into view on load / date change ───
+  useEffect(() => {
+    const el = activeDayRef.current;
+    if (el) {
+      // Small delay to let the list render first
+      const t = setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'center' }), 120);
+      return () => clearTimeout(t);
+    }
+  }, [activeDay, year, month0, animKey]);
 
   // ── Debounced auto-save ──────────────────────────────────
   useEffect(() => {
@@ -154,35 +180,53 @@ export default function HisabPage() {
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
   }, [data, year, month0]);
 
-  // ── Helper: refresh sales from storage ──────────────────────
+  // ── Helper: refresh sales + check for date change ────────
   const refreshSales = useCallback(() => {
     const { values, synced } = getDailySales(year, month0);
     setSales(values);
     setSyncedDays(synced);
   }, [year, month0]);
 
-  // ── Cross-tab: storage event ─────────────────────────────────
+  const syncDateFromStorage = useCallback(() => {
+    const { year: ny, month0: nm, day: nd } = readSelectedDate();
+    setYear(ny);
+    setMonth0(nm);
+    setActiveDay(nd);
+  }, []);
+
+  // ── Cross-tab: storage event ─────────────────────────────
   useEffect(() => {
     const handle = (e: StorageEvent) => {
-      if (e.key === 'CLICK_NET_SALES' || e.key === 'CLICK_CAFE_DB_V1') refreshSales();
+      if (e.key === 'CLICK_NET_SALES') refreshSales();
+      if (e.key === 'CLICK_SELECTED_DATE') syncDateFromStorage();
     };
     window.addEventListener('storage', handle);
     return () => window.removeEventListener('storage', handle);
-  }, [refreshSales]);
+  }, [refreshSales, syncDateFromStorage]);
 
-  // ── Same-window: custom event from Report Panel ──────────────
+  // ── Same-window: custom event from Report Panel ──────────
   useEffect(() => {
-    const handle = () => refreshSales();
-    window.addEventListener('click-net-sales-updated', handle);
-    return () => window.removeEventListener('click-net-sales-updated', handle);
-  }, [refreshSales]);
+    const handleSales = () => refreshSales();
+    const handleDate  = () => syncDateFromStorage();
+    window.addEventListener('click-net-sales-updated', handleSales);
+    window.addEventListener('click-selected-date-changed', handleDate);
+    return () => {
+      window.removeEventListener('click-net-sales-updated', handleSales);
+      window.removeEventListener('click-selected-date-changed', handleDate);
+    };
+  }, [refreshSales, syncDateFromStorage]);
 
-  // ── Same-tab: refresh when tab becomes visible ───────────────
+  // ── Same-tab: refresh when tab becomes visible ───────────
   useEffect(() => {
-    const handle = () => { if (document.visibilityState === 'visible') refreshSales(); };
+    const handle = () => {
+      if (document.visibilityState === 'visible') {
+        syncDateFromStorage();
+        refreshSales();
+      }
+    };
     document.addEventListener('visibilitychange', handle);
     return () => document.removeEventListener('visibilitychange', handle);
-  }, [refreshSales]);
+  }, [refreshSales, syncDateFromStorage]);
 
   // ── Month navigation ─────────────────────────────────────
   const prevMonth = () => {
@@ -234,7 +278,7 @@ export default function HisabPage() {
   );
   const netBalance = data.openingBalance + totalSale - totalPaid;
 
-  // ── Pulse the Net Balance card whenever it changes ───────────
+  // ── Pulse Net Balance card whenever it changes ───────────
   useEffect(() => { setBalancePulseKey(k => k + 1); }, [netBalance]);
 
   /** Running balance per day */
@@ -249,6 +293,9 @@ export default function HisabPage() {
     }
     return res;
   }, [sales, data.openingBalance, data.records, daysInMonth]);
+
+  // Is the HISAB month/year currently matching the active dashboard date?
+  const viewingActiveMonth = year === initDate.current.year && month0 === initDate.current.month0;
 
   // ─────────────────────────────────────────────────────────
   //  Render
@@ -303,13 +350,28 @@ export default function HisabPage() {
         </button>
       </div>
 
+      {/* ── Active date banner (when viewing the dashboard-selected month) ── */}
+      {viewingActiveMonth && (
+        <div className="shrink-0 px-3 pt-1.5">
+          <div className="flex items-center justify-between px-3 py-1.5 rounded-xl bg-cyan-950/30 border border-cyan-500/20 backdrop-blur-sm">
+            <div className="flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse inline-block" />
+              <span className="text-[9px] text-cyan-500 font-bold uppercase tracking-widest">Dashboard Date Active</span>
+            </div>
+            <span className="text-[9px] text-cyan-400 font-mono tabular-nums">
+              {String(activeDay).padStart(2, '0')} {MONTHS[month0]} {year}
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* ── Summary Cards ── */}
       <div className="px-3 pt-2 pb-1.5 shrink-0 space-y-1.5">
 
         {/* 3 Main Glassmorphism Cards */}
         <div className="grid grid-cols-3 gap-2">
 
-          {/* Total Sale — Neon Green (Live Sync) */}
+          {/* Total Sale — Neon Green */}
           <div className="bg-black/30 backdrop-blur-xl border border-green-500/20 rounded-xl p-2 relative overflow-hidden">
             <div className="absolute inset-0 bg-gradient-to-br from-green-500/[0.07] to-transparent pointer-events-none" />
             <div className="relative">
@@ -326,7 +388,7 @@ export default function HisabPage() {
                 style={{ textShadow: '0 0 16px rgba(74,222,128,0.7)' }}>
                 Rs {totalSale.toLocaleString()}
               </div>
-              <div className="text-[7px] text-slate-700 mt-1 font-mono">{Object.keys(sales).length} days</div>
+              <div className="text-[7px] text-slate-700 mt-1 font-mono">{Object.keys(sales).length} days synced</div>
             </div>
           </div>
 
@@ -348,7 +410,7 @@ export default function HisabPage() {
             </div>
           </div>
 
-          {/* Net Balance — Glowing Gold (with pulse on change) */}
+          {/* Net Balance — Glowing Gold */}
           <div className={`bg-black/30 backdrop-blur-xl border rounded-xl p-2 relative overflow-hidden ${netBalance >= 0 ? 'border-yellow-500/25' : 'border-red-600/30'}`}>
             <div className={`absolute inset-0 bg-gradient-to-br ${netBalance >= 0 ? 'from-yellow-500/[0.07]' : 'from-red-500/[0.07]'} to-transparent pointer-events-none`} />
             <div className="relative">
@@ -374,7 +436,7 @@ export default function HisabPage() {
           </div>
         </div>
 
-        {/* Opening Balance — minimal strip */}
+        {/* Opening Balance strip */}
         <div className="bg-black/20 border border-yellow-900/20 rounded-lg px-3 py-1.5 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-[7px] text-slate-600 uppercase tracking-widest font-bold whitespace-nowrap">Opening Balance</span>
@@ -424,195 +486,212 @@ export default function HisabPage() {
           </div>
         </div>
 
-      {/* ── Table Rows ── */}
-      <div key={animKey} className="px-3 pb-24 space-y-1.5 pt-2">
-        {Array.from({ length: daysInMonth }, (_, i) => i + 1).map((day, idx) => {
-          const sale    = sales[day] || 0;
-          const rec     = data.records.find(r => r.day === day);
-          const payouts = rec?.payouts ?? [];
-          const bal     = runningBal[day] ?? 0;
-          const hasSale = sale > 0;
-          const isSynced = syncedDays.has(day);
-          const isToday  = isCurrentMonth && day === todayDay;
+        {/* ── Table Rows ── */}
+        <div key={animKey} className="px-3 pb-24 space-y-1.5 pt-2">
+          {Array.from({ length: daysInMonth }, (_, i) => i + 1).map((day, idx) => {
+            const sale    = sales[day] || 0;
+            const rec     = data.records.find(r => r.day === day);
+            const payouts = rec?.payouts ?? [];
+            const bal     = runningBal[day] ?? 0;
+            const hasSale = sale > 0;
+            const isSynced  = syncedDays.has(day);
+            const isToday   = isCurrentMonth && day === todayDay;
+            // Day currently selected on the main dashboard (for this month)
+            const isActive  = viewingActiveMonth && day === activeDay;
 
-          return (
-            <div
-              key={day}
-              className={`rounded-2xl border overflow-hidden transition-colors duration-300 ${
-                isToday && hasSale
-                  ? 'border-green-500/40 bg-green-950/[0.12] shadow-[0_0_16px_rgba(74,222,128,0.08)]'
-                  : hasSale
-                    ? 'border-green-900/30 bg-green-950/[0.06]'
-                    : 'border-white/[0.05] bg-white/[0.015]'
-              }`}
-              style={{ animation: `hisabFadeIn 0.22s ease ${Math.min(idx * 0.015, 0.35)}s both` }}
-            >
-              {/* ── Primary day row ── */}
+            return (
               <div
-                className={`grid gap-2 items-center px-4 py-4 ${
-                  hasSale ? 'border-l-[3px] border-green-500/50' : 'border-l-[3px] border-transparent'
+                key={day}
+                ref={isActive ? activeDayRef : null}
+                className={`rounded-2xl border overflow-hidden transition-colors duration-300 ${
+                  isActive
+                    ? 'border-cyan-500/50 bg-cyan-950/[0.18] shadow-[0_0_20px_rgba(34,211,238,0.10)]'
+                    : isToday && hasSale
+                      ? 'border-green-500/40 bg-green-950/[0.12] shadow-[0_0_16px_rgba(74,222,128,0.08)]'
+                      : hasSale
+                        ? 'border-green-900/30 bg-green-950/[0.06]'
+                        : 'border-white/[0.05] bg-white/[0.015]'
                 }`}
-                style={{ gridTemplateColumns: '2.8rem 1fr 1.1fr 0.9fr 0.9fr 1.8rem' }}
+                style={{ animation: `hisabFadeIn 0.22s ease ${Math.min(idx * 0.015, 0.35)}s both` }}
               >
-                {/* Day number */}
-                <div className={`text-center font-mono font-black tabular-nums ${
-                  isToday ? 'text-green-400 text-base' : hasSale ? 'text-slate-400 text-sm' : 'text-slate-700 text-sm'
-                }`}>
-                  {String(day).padStart(2, '0')}
-                  {isToday && <div className="text-[6px] text-green-500/70 font-bold tracking-widest uppercase leading-none mt-0.5">today</div>}
-                </div>
-
-                {/* ── Daily Sale — KEY HIGHLIGHT, read-only, Report Panel synced ── */}
+                {/* ── Primary day row ── */}
                 <div
-                  className={`font-black tabular-nums select-none flex items-center gap-1.5 min-w-0 ${
-                    hasSale
-                      ? isSynced ? 'text-green-400 text-base' : 'text-emerald-400 text-base'
-                      : 'text-slate-700 text-sm'
+                  className={`grid gap-2 items-center px-4 py-4 ${
+                    isActive
+                      ? 'border-l-[3px] border-cyan-400/70'
+                      : hasSale
+                        ? 'border-l-[3px] border-green-500/50'
+                        : 'border-l-[3px] border-transparent'
                   }`}
-                  style={hasSale ? {
-                    textShadow: isSynced
-                      ? '0 0 16px rgba(74,222,128,0.9), 0 0 32px rgba(74,222,128,0.4)'
-                      : '0 0 12px rgba(52,211,153,0.6)',
-                  } : {}}
-                  title={isSynced ? 'Report Panel se auto-synced — Read Only' : 'Raw sale data — Read Only'}
+                  style={{ gridTemplateColumns: '2.8rem 1fr 1.1fr 0.9fr 0.9fr 1.8rem' }}
                 >
-                  {hasSale ? (
+                  {/* Day number */}
+                  <div className={`text-center font-mono font-black tabular-nums ${
+                    isActive  ? 'text-cyan-300 text-base' :
+                    isToday   ? 'text-green-400 text-base' :
+                    hasSale   ? 'text-slate-400 text-sm'  : 'text-slate-700 text-sm'
+                  }`}>
+                    {String(day).padStart(2, '0')}
+                    {isActive && (
+                      <div className="text-[6px] text-cyan-400/80 font-bold tracking-widest uppercase leading-none mt-0.5">active</div>
+                    )}
+                    {!isActive && isToday && (
+                      <div className="text-[6px] text-green-500/70 font-bold tracking-widest uppercase leading-none mt-0.5">today</div>
+                    )}
+                  </div>
+
+                  {/* ── Daily Sale — read-only, Report Panel synced ── */}
+                  <div
+                    className={`font-black tabular-nums select-none flex items-center gap-1.5 min-w-0 ${
+                      hasSale
+                        ? isSynced ? 'text-green-400 text-base' : 'text-emerald-400 text-base'
+                        : 'text-slate-700 text-sm'
+                    }`}
+                    style={hasSale ? {
+                      textShadow: isSynced
+                        ? '0 0 16px rgba(74,222,128,0.9), 0 0 32px rgba(74,222,128,0.4)'
+                        : '0 0 12px rgba(52,211,153,0.6)',
+                    } : {}}
+                    title="Report Panel se auto-synced — Read Only"
+                  >
+                    {hasSale ? (
+                      <>
+                        <span className="truncate">Rs {sale.toLocaleString()}</span>
+                        {isSynced && isActive && (
+                          <span className="shrink-0 text-[6px] bg-cyan-900/70 text-cyan-300 border border-cyan-500/40 px-1.5 py-0.5 rounded-full font-bold tracking-widest uppercase leading-none animate-pulse">LIVE</span>
+                        )}
+                        {isSynced && !isActive && (
+                          <span className="shrink-0 text-[7px] text-green-700/50 leading-none">⚡</span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="text-slate-800">—</span>
+                    )}
+                  </div>
+
+                  {/* ── First payout inline ── */}
+                  {payouts.length > 0 ? (
                     <>
-                      <span className="truncate">Rs {sale.toLocaleString()}</span>
-                      {isSynced && isToday && (
-                        <span className="shrink-0 text-[6px] bg-green-900/70 text-green-400 border border-green-600/40 px-1.5 py-0.5 rounded-full font-bold tracking-widest uppercase leading-none animate-pulse">LIVE</span>
-                      )}
-                      {isSynced && !isToday && (
-                        <span className="shrink-0 text-[7px] text-green-700/50 leading-none">⚡</span>
-                      )}
+                      <input
+                        value={payouts[0].payoutName}
+                        onChange={e => updatePayout(day, payouts[0].id, 'payoutName', e.target.value)}
+                        placeholder="Payout to..."
+                        className="bg-transparent border border-transparent border-b-red-900/30 text-red-400 text-sm font-mono focus:outline-none focus:border-b-cyan-500 focus:ring-0 placeholder-slate-800 w-full px-0 py-0.5 transition-colors duration-150 hisab-input"
+                      />
+                      <input
+                        type="number"
+                        value={payouts[0].amountPaid || ''}
+                        onChange={e => updatePayout(day, payouts[0].id, 'amountPaid', Number(e.target.value))}
+                        placeholder="0"
+                        className="bg-transparent border border-transparent border-b-red-900/30 text-red-400 text-sm font-black font-mono focus:outline-none focus:border-b-cyan-500 placeholder-slate-800 w-full px-0 py-0.5 tabular-nums transition-colors duration-150 hisab-input"
+                      />
                     </>
-                  ) : <span className="text-slate-800">—</span>}
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => addPayout(day)}
+                        className="text-left text-slate-800 hover:text-red-600/50 text-xs font-mono transition-colors"
+                      >
+                        + add payout
+                      </button>
+                      <div className="text-slate-800 text-sm font-mono">—</div>
+                    </>
+                  )}
+
+                  {/* ── Running Balance ── */}
+                  <div
+                    className={`text-sm font-black tabular-nums text-right truncate transition-all duration-300 ${bal >= 0 ? 'text-cyan-400' : 'text-red-400'}`}
+                    style={{ textShadow: bal >= 0 ? '0 0 10px rgba(34,211,238,0.5)' : '0 0 10px rgba(248,113,113,0.5)' }}
+                  >
+                    {bal !== 0 ? `${bal >= 0 ? '+' : ''}${bal.toLocaleString()}` : <span className="text-slate-700">0</span>}
+                  </div>
+
+                  {/* ── Add payout button ── */}
+                  <button
+                    onClick={() => addPayout(day)}
+                    title="Add payout entry"
+                    className="text-slate-700 hover:text-green-400 transition-colors flex items-center justify-center"
+                  >
+                    <Plus size={14} />
+                  </button>
                 </div>
 
-                {/* ── First payout inline ── */}
-                {payouts.length > 0 ? (
-                  <>
+                {/* ── Extra payout rows (idx 1+) ── */}
+                {payouts.slice(1).map(p => (
+                  <div
+                    key={p.id}
+                    className="grid gap-2 items-center px-4 py-2.5 bg-black/20 border-t border-white/[0.04]"
+                    style={{ gridTemplateColumns: '2.8rem 1fr 1.1fr 0.9fr 0.9fr 1.8rem' }}
+                  >
+                    <div /><div />
                     <input
-                      value={payouts[0].payoutName}
-                      onChange={e => updatePayout(day, payouts[0].id, 'payoutName', e.target.value)}
+                      value={p.payoutName}
+                      onChange={e => updatePayout(day, p.id, 'payoutName', e.target.value)}
                       placeholder="Payout to..."
-                      className="bg-transparent border border-transparent border-b-red-900/30 text-red-400 text-sm font-mono focus:outline-none focus:border-b-cyan-500 focus:ring-0 placeholder-slate-800 w-full px-0 py-0.5 transition-colors duration-150 hisab-input"
+                      className="bg-transparent border-b border-red-900/20 text-red-400/70 text-xs font-mono focus:outline-none focus:border-b-cyan-500 placeholder-slate-800 w-full transition-colors hisab-input"
                     />
                     <input
                       type="number"
-                      value={payouts[0].amountPaid || ''}
-                      onChange={e => updatePayout(day, payouts[0].id, 'amountPaid', Number(e.target.value))}
+                      value={p.amountPaid || ''}
+                      onChange={e => updatePayout(day, p.id, 'amountPaid', Number(e.target.value))}
                       placeholder="0"
-                      className="bg-transparent border border-transparent border-b-red-900/30 text-red-400 text-sm font-black font-mono focus:outline-none focus:border-b-cyan-500 placeholder-slate-800 w-full px-0 py-0.5 tabular-nums transition-colors duration-150 hisab-input"
+                      className="bg-transparent border-b border-red-900/20 text-red-400/70 text-xs font-mono focus:outline-none focus:border-b-cyan-500 placeholder-slate-800 w-full tabular-nums transition-colors hisab-input"
                     />
-                  </>
-                ) : (
-                  <>
+                    <div />
                     <button
-                      onClick={() => addPayout(day)}
-                      className="text-left text-slate-800 hover:text-red-600/50 text-xs font-mono transition-colors"
+                      onClick={() => removePayout(day, p.id)}
+                      className="text-slate-800 hover:text-red-500 transition-colors flex items-center justify-center"
                     >
-                      + add payout
+                      <Trash2 size={11} />
                     </button>
-                    <div className="text-slate-800 text-sm font-mono">—</div>
-                  </>
+                  </div>
+                ))}
+
+                {/* ── Remove first payout ── */}
+                {payouts.length > 0 && (
+                  <div className="flex justify-end px-4 pb-2 pt-0 gap-3">
+                    <button
+                      onClick={() => removePayout(day, payouts[0].id)}
+                      className="flex items-center gap-0.5 text-[8px] font-mono text-slate-800 hover:text-red-500 transition-colors"
+                    >
+                      <Trash2 size={7} /> clear
+                    </button>
+                  </div>
                 )}
-
-                {/* ── Running Balance ── */}
-                <div
-                  className={`text-sm font-black tabular-nums text-right truncate transition-all duration-300 ${bal >= 0 ? 'text-cyan-400' : 'text-red-400'}`}
-                  style={{ textShadow: bal >= 0 ? '0 0 10px rgba(34,211,238,0.5)' : '0 0 10px rgba(248,113,113,0.5)' }}
-                >
-                  {bal !== 0 ? `${bal >= 0 ? '+' : ''}${bal.toLocaleString()}` : <span className="text-slate-700">0</span>}
-                </div>
-
-                {/* ── Add payout button ── */}
-                <button
-                  onClick={() => addPayout(day)}
-                  title="Add payout entry"
-                  className="text-slate-700 hover:text-green-400 transition-colors flex items-center justify-center"
-                >
-                  <Plus size={14} />
-                </button>
               </div>
+            );
+          })}
 
-              {/* ── Extra payout rows (idx 1+) ── */}
-              {payouts.slice(1).map(p => (
-                <div
-                  key={p.id}
-                  className="grid gap-2 items-center px-4 py-2.5 bg-black/20 border-t border-white/[0.04]"
-                  style={{ gridTemplateColumns: '2.8rem 1fr 1.1fr 0.9fr 0.9fr 1.8rem' }}
-                >
-                  <div />
-                  <div />
-                  <input
-                    value={p.payoutName}
-                    onChange={e => updatePayout(day, p.id, 'payoutName', e.target.value)}
-                    placeholder="Payout to..."
-                    className="bg-transparent border-b border-red-900/20 text-red-400/70 text-xs font-mono focus:outline-none focus:border-b-cyan-500 placeholder-slate-800 w-full transition-colors hisab-input"
-                  />
-                  <input
-                    type="number"
-                    value={p.amountPaid || ''}
-                    onChange={e => updatePayout(day, p.id, 'amountPaid', Number(e.target.value))}
-                    placeholder="0"
-                    className="bg-transparent border-b border-red-900/20 text-red-400/70 text-xs font-mono focus:outline-none focus:border-b-cyan-500 placeholder-slate-800 w-full tabular-nums transition-colors hisab-input"
-                  />
-                  <div />
-                  <button
-                    onClick={() => removePayout(day, p.id)}
-                    className="text-slate-800 hover:text-red-500 transition-colors flex items-center justify-center"
-                  >
-                    <Trash2 size={11} />
-                  </button>
-                </div>
-              ))}
-
-              {/* ── Remove first payout ── */}
-              {payouts.length > 0 && (
-                <div className="flex justify-end px-4 pb-2 pt-0 gap-3">
-                  <button
-                    onClick={() => removePayout(day, payouts[0].id)}
-                    className="flex items-center gap-0.5 text-[8px] font-mono text-slate-800 hover:text-red-500 transition-colors"
-                  >
-                    <Trash2 size={7} /> clear
-                  </button>
-                </div>
-              )}
+          {/* ── Month Closing Summary ── */}
+          <div className="mt-4 p-5 rounded-2xl bg-black/30 backdrop-blur-xl border border-white/[0.08]">
+            <div className="text-[9px] text-slate-600 uppercase tracking-[0.3em] font-bold mb-4 text-center">
+              {MONTHS[month0]} {year} — Closing Summary
             </div>
-          );
-        })}
-
-        {/* ── Month Closing Summary ── */}
-        <div className="mt-4 p-5 rounded-2xl bg-black/30 backdrop-blur-xl border border-white/[0.08]">
-          <div className="text-[9px] text-slate-600 uppercase tracking-[0.3em] font-bold mb-4 text-center">
-            {MONTHS[month0]} {year} — Closing Summary
-          </div>
-          <div className="grid grid-cols-3 gap-4 text-center">
-            <div>
-              <div className="text-green-400 text-xl font-black tabular-nums" style={{ textShadow: '0 0 16px rgba(74,222,128,0.6)' }}>
-                Rs {totalSale.toLocaleString()}
+            <div className="grid grid-cols-3 gap-4 text-center">
+              <div>
+                <div className="text-green-400 text-xl font-black tabular-nums" style={{ textShadow: '0 0 16px rgba(74,222,128,0.6)' }}>
+                  Rs {totalSale.toLocaleString()}
+                </div>
+                <div className="text-[8px] text-slate-600 uppercase tracking-wider mt-1.5">Total Sale</div>
               </div>
-              <div className="text-[8px] text-slate-600 uppercase tracking-wider mt-1.5">Total Sale</div>
-            </div>
-            <div>
-              <div className="text-red-400 text-xl font-black tabular-nums" style={{ textShadow: '0 0 16px rgba(248,113,113,0.5)' }}>
-                Rs {totalPaid.toLocaleString()}
+              <div>
+                <div className="text-red-400 text-xl font-black tabular-nums" style={{ textShadow: '0 0 16px rgba(248,113,113,0.5)' }}>
+                  Rs {totalPaid.toLocaleString()}
+                </div>
+                <div className="text-[8px] text-slate-600 uppercase tracking-wider mt-1.5">Total Paid</div>
               </div>
-              <div className="text-[8px] text-slate-600 uppercase tracking-wider mt-1.5">Total Paid</div>
-            </div>
-            <div>
-              <div className={`text-xl font-black tabular-nums ${netBalance >= 0 ? 'text-yellow-400' : 'text-red-400'}`}
-                style={{ textShadow: netBalance >= 0 ? '0 0 16px rgba(250,204,21,0.6)' : '0 0 16px rgba(248,113,113,0.5)' }}>
-                Rs {Math.abs(netBalance).toLocaleString()}
-              </div>
-              <div className="text-[8px] text-slate-600 uppercase tracking-wider mt-1.5">
-                {netBalance >= 0 ? '✅ Carry Forward' : '⚠ Deficit'}
+              <div>
+                <div className={`text-xl font-black tabular-nums ${netBalance >= 0 ? 'text-yellow-400' : 'text-red-400'}`}
+                  style={{ textShadow: netBalance >= 0 ? '0 0 16px rgba(250,204,21,0.6)' : '0 0 16px rgba(248,113,113,0.5)' }}>
+                  Rs {Math.abs(netBalance).toLocaleString()}
+                </div>
+                <div className="text-[8px] text-slate-600 uppercase tracking-wider mt-1.5">
+                  {netBalance >= 0 ? '✅ Carry Forward' : '⚠ Deficit'}
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      </div>{/* end table rows */}
+        </div>{/* end table rows */}
       </div>{/* end scrollable area */}
 
       {/* ── Animations ── */}

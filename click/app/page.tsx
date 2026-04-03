@@ -898,14 +898,17 @@ export default function ClickDashboard() {
   const netBalance = grandTotal - totalInventoryCost;
 
   // ── Sync net balance → CLICK_NET_SALES (feeds HISAB "Daily Sale" column) ──
+  // Also writes CLICK_SELECTED_DATE so HISAB knows which date is active.
   useEffect(() => {
-    const dateKey = getStorageKey(currentDate, selectedDay);
+    const dateKey = getStorageKey(currentDate, selectedDay); // format: year-month0-day
     try {
       const store: Record<string, number> = JSON.parse(localStorage.getItem('CLICK_NET_SALES') || '{}');
       store[dateKey] = netBalance;
       localStorage.setItem('CLICK_NET_SALES', JSON.stringify(store));
-      // Notify any same-window listener (e.g. HISAB page in another component)
+      // Write currently selected date so HISAB can auto-navigate to it
+      localStorage.setItem('CLICK_SELECTED_DATE', dateKey);
       window.dispatchEvent(new CustomEvent('click-net-sales-updated', { detail: { dateKey, value: netBalance } }));
+      window.dispatchEvent(new CustomEvent('click-selected-date-changed', { detail: { dateKey } }));
     } catch { /* quota */ }
     setHisabDotActive(true);
     const timer = setTimeout(() => setHisabDotActive(false), 3000);
