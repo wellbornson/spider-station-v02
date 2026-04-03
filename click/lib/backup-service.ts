@@ -28,7 +28,7 @@ export class BackupService {
   private constructor() {
     // Initialize with default config
     this.config = {
-      email: typeof window !== 'undefined' ? localStorage.getItem('backup_email') || 'wellbornson@yahoo.com' : 'wellbornson@yahoo.com', // Updated to your email address
+      email: typeof window !== 'undefined' ? localStorage.getItem('backup_email') || 'muhammad.zahid.imam@gmail.com' : 'muhammad.zahid.imam@gmail.com',
       enabled: true,
       scheduleTime: '00:00' // 12:00 AM
     };
@@ -173,16 +173,10 @@ export class BackupService {
     setTimeout(checkConnection, 30000);
   }
 
-  // Manual backup function
+  // Manual backup function — throws on failure so UI can show the real error
   public async manualBackup(): Promise<void> {
-    try {
-      const backupData = await this.createBackupData();
-      await this.sendBackupViaEmail(backupData);
-      // Manual backup completed successfully
-    } catch (error) {
-      // Queue the backup to retry when internet is available
-      await this.queueBackupForRetry();
-    }
+    const backupData = await this.createBackupData();
+    await this.sendBackupViaEmail(backupData); // let errors propagate to caller
   }
 
   // Import legacy data from backup file (public method for external use)

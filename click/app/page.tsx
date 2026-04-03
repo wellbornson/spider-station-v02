@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
 import { syncService } from '../lib/sync-service';
@@ -8,31 +8,51 @@ import { useGlobalData } from './contexts/GlobalDataContext';
 import ThreeDAnalytics from '../components/ThreeDAnalytics';
 import { backupService } from '../lib/backup-service';
 import SettingsModal from './components/SettingsModal';
+import { appendMunshiRecord, searchHistory, MunshiSearchResult } from '../lib/munshi-search';
+import { Wand2 } from 'lucide-react';
 
 // --- CSS FOR ANIMATIONS ---
 const styles = `
   @keyframes bounce-horizontal {
-    0% { left: 100%; transform: translateX(-100%); }
-    50% { left: 0%; transform: translateX(0%); }
-    100% { left: 100%; transform: translateX(-100%); }
+    0% { left: 100%; transform: translateX(-100%) translateZ(0); }
+    50% { left: 0%; transform: translateX(0%) translateZ(0); }
+    100% { left: 100%; transform: translateX(-100%) translateZ(0); }
   }
   .animate-bounce-text {
     position: absolute;
     animation: bounce-horizontal 15s infinite ease-in-out;
     white-space: nowrap;
+    will-change: transform, left;
+  }
+  @keyframes munshi-pulse {
+    0%, 100% { box-shadow: 0 0 8px rgba(251,191,36,0.5); transform: scale(1) translateZ(0); }
+    50% { box-shadow: 0 0 22px rgba(251,191,36,0.9), 0 0 38px rgba(251,100,36,0.5); transform: scale(1.1) translateZ(0); }
+  }
+  .animate-munshi-pulse {
+    animation: munshi-pulse 0.8s ease-in-out infinite;
+  }
+  @keyframes spin-ring {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+  }
+  .animate-spin-ring {
+    animation: spin-ring 3s linear infinite;
+    will-change: transform;
+  }
+  @keyframes jadugar-glow {
+    0%, 100% { box-shadow: 0 0 12px rgba(0,255,255,0.5), 0 0 24px rgba(139,0,255,0.3); }
+    50%       { box-shadow: 0 0 22px rgba(0,255,255,0.9), 0 0 44px rgba(139,0,255,0.6); }
+  }
+  .animate-jadugar-glow {
+    animation: jadugar-glow 2.5s ease-in-out infinite;
   }
   @keyframes pulse-slow {
-    0%, 100% {
-      box-shadow: 0 0 5px rgba(255, 255, 255, 0.3);
-      transform: scale(1);
-    }
-    50% {
-      box-shadow: 0 0 15px rgba(100, 200, 255, 0.6), 0 0 25px rgba(100, 150, 255, 0.4);
-      transform: scale(1.05);
-    }
+    0%, 100% { box-shadow: 0 0 5px rgba(255, 255, 255, 0.3); transform: scale(1) translateZ(0); }
+    50% { box-shadow: 0 0 15px rgba(100, 200, 255, 0.6), 0 0 25px rgba(100, 150, 255, 0.4); transform: scale(1.05) translateZ(0); }
   }
   .animate-pulse-slow {
     animation: pulse-slow 4s ease-in-out infinite;
+    will-change: transform, box-shadow;
   }
   @keyframes gradient-move {
     0% { background-position: 0% 50%; }
@@ -42,169 +62,89 @@ const styles = `
   .animate-gradient-bg {
     background-size: 400% 400%;
     animation: gradient-move 15s ease infinite;
+    will-change: background-position;
   }
   @keyframes police-flash {
     0% { background-color: rgba(220, 38, 38, 0.9); }
     50% { background-color: rgba(30, 58, 138, 0.9); }
     100% { background-color: rgba(220, 38, 38, 0.9); }
   }
-  .police-alert { animation: police-flash 0.5s infinite; }
+  .police-alert { animation: police-flash 0.5s infinite; will-change: background-color; }
   @keyframes warning-blink {
     0%, 100% { background-color: rgba(255, 107, 0, 0.1); border-color: rgba(255, 107, 0, 0.3); box-shadow: 0 0 5px rgba(255, 107, 0, 0.3); }
     50% { background-color: rgba(255, 107, 0, 0.4); border-color: rgba(255, 107, 0, 1); box-shadow: 0 0 20px rgba(255, 107, 0, 0.8), 0 0 30px rgba(255, 107, 0, 0.6); }
   }
-  .animate-warning { animation: warning-blink 1s infinite; }
+  .animate-warning { animation: warning-blink 1s infinite; will-change: box-shadow, background-color; }
   @keyframes neon-orange-pulse {
     0%, 100% { box-shadow: 0 0 5px rgba(255, 107, 0, 0.5), 0 0 10px rgba(255, 107, 0, 0.3); }
     50% { box-shadow: 0 0 20px rgba(255, 107, 0, 0.8), 0 0 30px rgba(255, 107, 0, 0.9), 0 0 40px rgba(255, 107, 0, 0.6); }
   }
-  .animate-neon-warning { animation: neon-orange-pulse 1.5s ease-in-out infinite alternate; }
+  .animate-neon-warning { animation: neon-orange-pulse 1.5s ease-in-out infinite alternate; will-change: box-shadow; }
   @keyframes alertPulse {
     0%, 100% { box-shadow: 0 0 5px rgba(255, 107, 0, 0.5), 0 0 10px rgba(255, 107, 0, 0.3); }
     50% { box-shadow: 0 0 20px rgba(255, 107, 0, 0.8), 0 0 30px rgba(255, 107, 0, 0.9), 0 0 40px rgba(255, 107, 0, 0.6); }
   }
-  .animate-alert-pulse { animation: alertPulse 1.5s ease-in-out infinite alternate; }
+  .animate-alert-pulse { animation: alertPulse 1.5s ease-in-out infinite alternate; will-change: box-shadow; }
   @keyframes neon-blink {
     0% { box-shadow: 0 0 5px #ff9900; }
     50% { box-shadow: 0 0 20px #ff0000; }
     100% { box-shadow: 0 0 5px #ff9900; }
   }
-  .neon-blink { animation: neon-blink 1.5s ease-in-out infinite alternate; }
-  @keyframes neon-orange-pulse {
-    0%, 100% { box-shadow: 0 0 5px rgba(255, 107, 0, 0.5), 0 0 10px rgba(255, 107, 0, 0.3); }
-    50% { box-shadow: 0 0 20px rgba(255, 107, 0, 0.8), 0 0 30px rgba(255, 107, 0, 0.9), 0 0 40px rgba(255, 107, 0, 0.6); }
-  }
-  .animate-neon-warning { animation: neon-orange-pulse 1.5s ease-in-out infinite alternate; }
+  .neon-blink { animation: neon-blink 1.5s ease-in-out infinite alternate; will-change: box-shadow; }
   .bar-grow { animation: grow-up 1s ease-out forwards; }
   @keyframes grow-up { from { height: 0; opacity: 0; } to { opacity: 1; } }
   .perspective-container { perspective: 1000px; }
   .glass-panel { backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
   .writing-vertical { writing-mode: vertical-rl; }
-  .custom-scrollbar-no-display::-webkit-scrollbar {
-    display: none;
-  }
-  .custom-scrollbar-no-display {
-    -ms-overflow-style: none;
-    scrollbar-width: none;
-  }
-  .name-input-wrapper {
-    position: relative;
-    display: inline-block;
-    width: 100%;
-  }
-  .amount-cell-wrapper {
-    position: relative;
-    display: inline-block;
-    width: 100%;
-    overflow: hidden;
-  }
+  .custom-scrollbar-no-display::-webkit-scrollbar { display: none; }
+  .custom-scrollbar-no-display { -ms-overflow-style: none; scrollbar-width: none; }
+  .custom-scrollbar::-webkit-scrollbar { width: 12px; }
+  .custom-scrollbar::-webkit-scrollbar-track { background: #1a1a1a; border-radius: 10px; }
+  .custom-scrollbar::-webkit-scrollbar-thumb { background: #FF8C00; border-radius: 10px; border: 3px solid #1a1a1a; }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #e67e22; }
+  .name-input-wrapper { position: relative; display: inline-block; width: 100%; }
+  .amount-cell-wrapper { position: relative; display: inline-block; width: 100%; overflow: hidden; }
   @keyframes pulse {
-    0%, 100% { transform: scale(1); }
-    50% { transform: scale(1.02); }
+    0%, 100% { transform: scale(1) translateZ(0); }
+    50% { transform: scale(1.1) translateZ(0); }
   }
-  .animate-pulse {
-    animation: pulse 0.15s ease-in-out;
-  }
+  .rotation-icon { font-size: 60px; margin-bottom: 20px; animation: pulse 1.5s infinite; will-change: transform; }
   /* Position suggestions directly under the name input */
-  .name-suggestions-dropdown {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    width: 100%;
-    z-index: 50;
-    margin-top: 2px;
-  }
+  .name-suggestions-dropdown { position: absolute; top: 100%; left: 0; width: 100%; z-index: 50; margin-top: 2px; }
   /* Mobile Landscape Detection */
   .rotation-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
-    background-color: #000;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    z-index: 9999;
-    text-align: center;
-    padding: 20px;
+    position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+    background-color: #000; display: flex; flex-direction: column;
+    justify-content: center; align-items: center; z-index: 9999; text-align: center; padding: 20px;
   }
-  .rotation-message {
-    color: white;
-    font-size: 24px;
-    font-weight: bold;
-    margin-bottom: 20px;
-    text-align: center;
-  }
-  .rotation-icon {
-    font-size: 60px;
-    margin-bottom: 20px;
-    animation: pulse 1.5s infinite;
-  }
-  @keyframes pulse {
-    0% { transform: scale(1); }
-    50% { transform: scale(1.1); }
-    100% { transform: scale(1); }
-  }
+  .rotation-message { color: white; font-size: 24px; font-weight: bold; margin-bottom: 20px; text-align: center; }
   /* Mobile-specific styles */
   @media (max-width: 768px) {
-    .mobile-landscape {
-      transform: rotate(0deg);
-      min-height: 100vh;
-      min-width: 100vw;
-    }
-    .mobile-landscape.landscape-mode {
-      transform: rotate(0deg);
-    }
-    .mobile-landscape.portrait-mode {
-      transform: rotate(0deg);
-    }
+    .mobile-landscape { transform: rotate(0deg); min-height: 100vh; min-width: 100vw; }
+    .mobile-landscape.landscape-mode { transform: rotate(0deg); }
+    .mobile-landscape.portrait-mode { transform: rotate(0deg); }
   }
-  /* Scale down content for mobile */
-  .mobile-scaler {
-    width: 100%;
-    transform-origin: top left;
-  }
-  /* Mobile landscape scaling */
+  .mobile-scaler { width: 100%; transform-origin: top left; }
   @media (max-width: 1024px) and (orientation: landscape) {
-    .mobile-landscape-scaler {
-      transform: scale(0.85);
-      transform-origin: top left;
-      width: 117.65%; /* 100/0.85 */
-      height: 117.65%;
-    }
+    .mobile-landscape-scaler { transform: scale(0.85); transform-origin: top left; width: 117.65%; height: 117.65%; }
   }
   @media (max-width: 768px) and (orientation: landscape) {
-    .mobile-landscape-scaler {
-      transform: scale(0.75);
-      transform-origin: top left;
-      width: 133.33%; /* 100/0.75 */
-      height: 133.33%;
-    }
+    .mobile-landscape-scaler { transform: scale(0.75); transform-origin: top left; width: 133.33%; height: 133.33%; }
   }
   @media (max-width: 600px) and (orientation: landscape) {
-    .mobile-landscape-scaler {
-      transform: scale(0.65);
-      transform-origin: top left;
-      width: 153.85%; /* 100/0.65 */
-      height: 153.85%;
-    }
+    .mobile-landscape-scaler { transform: scale(0.65); transform-origin: top left; width: 153.85%; height: 153.85%; }
   }
-  /* Input zoom prevention */
-  input:focus {
-    font-size: 16px !important; /* Prevent iOS zoom on focus */
-  }
-
-  /* Crystal Glass Edition Shimmer Effect */
+  input:focus { font-size: 16px !important; }
   @keyframes shimmer {
     0% { background-position: -1000px 0; }
     100% { background-position: 1000px 0; }
   }
   .shimmer {
-    background: linear-gradient(to right, rgba(255,255,255,0) 0%, rgba(255,255,255,0.3) 50%, rgba(255,255,255,0) 100%);
+    background: linear-gradient(to right, rgba(255,255,255,0) 0%, rgba(255,255,255,0.25) 50%, rgba(255,255,255,0) 100%);
     background-size: 1000px 100%;
-    animation: shimmer 2s infinite linear;
+    animation: shimmer 4s infinite linear;
+    will-change: background-position;
+    pointer-events: none;
   }
 `;
 
@@ -246,6 +186,13 @@ export default function ClickDashboard() {
   const [awaitingAiAuth, setAwaitingAiAuth] = useState(false);
   const [aiContext, setAiContext] = useState<AiContextType>({ status: 'IDLE', targetName: '', intent: 'DETAIL' });
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const saveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // ── Smart Munshi Search ──
+  const [showMunshi, setShowMunshi] = useState(false);
+  const [munshiQuery, setMunshiQuery] = useState('');
+  const [munshiResult, setMunshiResult] = useState<MunshiSearchResult | null>(null);
+  const [munshiSearching, setMunshiSearching] = useState(false);
+  const munshiDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [blockList, setBlockList] = useState<string[]>([]);
   const [blockInput, setBlockInput] = useState("");
   const [policeAlert, setPoliceAlert] = useState(false);
@@ -260,40 +207,29 @@ export default function ClickDashboard() {
   const [isPortrait, setIsPortrait] = useState(false);
   const [showRotationOverlay, setShowRotationOverlay] = useState(false);
 
-  // State for shimmer effect
-  const [showShimmer, setShowShimmer] = useState(true);
-
-  // Toggle shimmer effect periodically
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setShowShimmer(true);
-      setTimeout(() => setShowShimmer(false), 1000); // Show shimmer for 1 second
-    }, 5000); // Every 5 seconds
-
-    return () => clearInterval(interval);
-  }, []);
+  // Shimmer is always-on via CSS animation for Crystal Glass theme (no state needed)
 
   // --- ARCHIVE LOGIC: Store previous day's data when date changes ---
   const [archivedData, setArchivedData] = useState<any[]>([]);
 
-  // Function to archive current day's data when date changes
-  const archiveCurrentDayData = (currentDayData: any, dateKey: string) => {
-    if (currentDayData && currentDayData.users && currentDayData.users.length > 0) {
-      // Only archive users who have both timeOut and amount filled (frozen rows)
-      const frozenUsers = currentDayData.users.filter((user: any) =>
-        user.timeOut && user.timeOut.trim() !== '' && user.amount && user.amount !== ''
-      );
+  // Ref so the archive effect always reads latest masterData without depending on it
+  const masterDataRef = useRef<{ [key: string]: any }>({});
+  useEffect(() => { masterDataRef.current = masterData; }, [masterData]);
 
-      if (frozenUsers.length > 0) {
-        const archivedEntry = {
-          date: dateKey,
-          users: frozenUsers,
-          timestamp: new Date().toISOString()
-        };
-        setArchivedData(prev => [...prev, archivedEntry]);
-      }
-    }
-  };
+  // Stable archive function — wrapped in useCallback so its reference never changes,
+  // preventing it from re-triggering the effect on every render.
+  const archiveCurrentDayData = useCallback((currentDayData: any, dateKey: string) => {
+    if (!currentDayData?.users?.length) return;
+    const frozenUsers = currentDayData.users.filter((user: any) =>
+      user.timeOut && user.timeOut.trim() !== '' && user.amount && user.amount !== ''
+    );
+    if (frozenUsers.length === 0) return;
+    setArchivedData(prev => {
+      // ── Dedup guard: never add a second archive entry for the same date ──
+      if (prev.some((a: any) => a.date === dateKey)) return prev;
+      return [...prev, { date: dateKey, users: frozenUsers, timestamp: new Date().toISOString() }];
+    });
+  }, []); // stable — no deps needed; reads state only via setArchivedData updater form
 
   // --- TODAY'S NAME SUGGESTION SYSTEM ---
   const [todayNames, setTodayNames] = useState<string[]>([]);
@@ -301,24 +237,26 @@ export default function ClickDashboard() {
   const [currentSuggestionIndex, setCurrentSuggestionIndex] = useState(0);
   const [filteredSuggestions, setFilteredSuggestions] = useState<string[]>([]);
   const [activeInputId, setActiveInputId] = useState<number | null>(null); // Track which input is active
-  const [typingAnimationTrigger, setTypingAnimationTrigger] = useState<number | null>(null); // Track which row is animating
 
-  // Archive data when the date changes
+  // Archive data when the date changes.
+  // IMPORTANT: masterData is intentionally read via masterDataRef (not listed in deps)
+  // to prevent this effect from re-firing every time masterData updates, which caused
+  // an infinite loop: setArchivedData → re-render → masterData ref changes → effect fires → repeat.
   useEffect(() => {
     const today = new Date();
     const todayKey = `${today.getFullYear()}-${today.getMonth()}-${today.getDate()}`;
     const currentKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}-${currentDate.getDate()}`;
 
     if (todayKey !== currentKey) {
-      // Archive the current day's data before changing the date
       const currentDayKey = getStorageKey(currentDate, selectedDay);
-      const currentDayData = masterData[currentDayKey];
+      const currentDayData = masterDataRef.current[currentDayKey]; // ref — no dep needed
       if (currentDayData) {
         archiveCurrentDayData(currentDayData, currentDayKey);
       }
-      setTodayNames([]); // Clear names if it's not today's date
+      setTodayNames([]);
     }
-  }, [currentDate, masterData, selectedDay, archiveCurrentDayData]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentDate, selectedDay]); // masterData excluded intentionally — use ref above
 
   // Handle clicks outside of name inputs to close suggestions
   useEffect(() => {
@@ -380,46 +318,63 @@ export default function ClickDashboard() {
   // --- SIDE PANEL STATE VARIABLES ---
   const [showReportsPanel, setShowReportsPanel] = useState(false);
   const [showCafePanel, setShowCafePanel] = useState(false);
+  const [hisabDotActive, setHisabDotActive] = useState(false);
   const [cafeItems, setCafeItems] = useState<{ id: number; name: string; price: number }[]>([]);
   const [itemName, setItemName] = useState("");
   const [itemPrice, setItemPrice] = useState("");
 
   // --- AUTO-SAVE & LOAD SYSTEM (DATABASE SIMULATION) ---
   useEffect(() => {
-    // 1. Load Data on Startup
+    // Load non-masterData fields on startup (masterData is handled by GlobalDataContext)
     const savedData = localStorage.getItem('CLICK_CAFE_DB_V1');
     if (savedData) {
         try {
             const parsed = JSON.parse(savedData);
-            if(parsed.archivedData) setArchivedData(parsed.archivedData); // Load archived data
+            if(parsed.archivedData) setArchivedData(parsed.archivedData);
             if(parsed.blockList) setBlockList(parsed.blockList);
             if(parsed.adminPin) setAdminPin(parsed.adminPin);
             if(parsed.themeIndex !== undefined) setThemeIndex(parsed.themeIndex);
             if(parsed.generatorLogs) setGeneratorLogs(parsed.generatorLogs);
             if(parsed.teaLogs) setTeaLogs(parsed.teaLogs);
-            // Optionally load last active date
-            // if(parsed.currentDate) setCurrentDate(new Date(parsed.currentDate));
         } catch (e) {
             // Error handled silently to avoid console noise in production
         }
     }
   }, []);
 
+  // ── Ghost-row sanitizer: strip nameless rows before ANY write to localStorage ──
+  // A row without a name is never worth persisting — it's either a blank shell
+  // the user never filled in, or junk from a previous session.
+  const sanitizeMasterData = useCallback((md: { [key: string]: any }) => {
+    const clean: { [key: string]: any } = {};
+    Object.keys(md).forEach(dateKey => {
+      const day = md[dateKey];
+      if (!day) return;
+      clean[dateKey] = {
+        ...day,
+        users: Array.isArray(day.users)
+          ? day.users.filter((u: any) => u.name && String(u.name).trim() !== '')
+          : [],
+      };
+    });
+    return clean;
+  }, []);
+
   useEffect(() => {
-    // 2. Save Data on Any Change
-    const dataToSave = {
-        masterData,
-        blockList,
-        adminPin,
-        themeIndex,
-        generatorLogs,
-        teaLogs,
-        // currentDate: currentDate.toISOString()
+    // Stealth debounced auto-save — fires 800ms after last change, no UI blocking
+    if (Object.keys(masterData).length === 0 && blockList.length === 0) return;
+    if (saveDebounceRef.current) clearTimeout(saveDebounceRef.current);
+    saveDebounceRef.current = setTimeout(() => {
+      const dataToSave = {
+        masterData: sanitizeMasterData(masterData), // ← sanitize before write
+        blockList, adminPin, themeIndex, generatorLogs, teaLogs,
+      };
+      localStorage.setItem('CLICK_CAFE_DB_V1', JSON.stringify(dataToSave));
+    }, 800);
+    return () => {
+      if (saveDebounceRef.current) clearTimeout(saveDebounceRef.current);
     };
-    if (Object.keys(masterData).length > 0 || blockList.length > 0) {
-        localStorage.setItem('CLICK_CAFE_DB_V1', JSON.stringify(dataToSave));
-    }
-  }, [masterData, blockList, adminPin, themeIndex, generatorLogs, teaLogs]);
+  }, [masterData, blockList, adminPin, themeIndex, generatorLogs, teaLogs, sanitizeMasterData]);
 
   // --- AUTO-SAVE EFFECT WITH CHANGE TRACKING ---
   useEffect(() => {
@@ -456,10 +411,10 @@ export default function ClickDashboard() {
   const handleIncrementalSave = async () => {
     setIsAutoSaving(true);
 
-    // Prepare data to save
+    // Prepare data to save — sanitize masterData to strip nameless ghost rows
     const currentDataToSave = {
-      masterData,
-      archivedData, // Include archived data
+      masterData: sanitizeMasterData(masterData), // ← sanitize before write
+      archivedData,
       blockList,
       adminPin,
       themeIndex,
@@ -603,13 +558,11 @@ export default function ClickDashboard() {
     const [inHours, inMinutes] = timeIn.split(':').map(Number);
     const [outHours, outMinutes] = timeOut.split(':').map(Number);
 
-    // Handle overnight shifts (assuming timeOut could be next day)
     let totalInMinutes = inHours * 60 + inMinutes;
     let totalOutMinutes = outHours * 60 + outMinutes;
 
-    // If time out is earlier than time in, assume it's the next day
     if (totalOutMinutes < totalInMinutes) {
-      totalOutMinutes += 24 * 60; // Add 24 hours in minutes
+      totalOutMinutes += 24 * 60;
     }
 
     const totalMinutes = totalOutMinutes - totalInMinutes;
@@ -619,52 +572,73 @@ export default function ClickDashboard() {
     return `${hours}.${minutes.toString().padStart(2, '0')}`;
   };
 
+  const calculateTotalTime = (timeIn: string, timeOut: string): string | null => {
+    if (!timeIn || !timeOut) return null;
+    const timeRegex = /^([0-9]|0[0-9]|1[0-9]|2[0-3]):[0-5][0-9]$/;
+    if (!timeRegex.test(timeIn) || !timeRegex.test(timeOut)) return null;
+    const [inH, inM] = timeIn.split(':').map(Number);
+    const [outH, outM] = timeOut.split(':').map(Number);
+    let inMins = inH * 60 + inM;
+    let outMins = outH * 60 + outM;
+    if (outMins < inMins) outMins += 1440; // Night shift: add 24 hours
+    const diff = outMins - inMins;
+    const h = Math.floor(diff / 60);
+    const m = diff % 60;
+    if (h === 0) return `${m}m`;
+    if (m === 0) return `${h}h`;
+    return `${h}h ${m}m`;
+  };
+
   const getCurrentData = (date = currentDate, day = selectedDay) => {
     const key = getStorageKey(date, day);
     const defaultData = {
-        users: Array.from({ length: 300 }).map((_, i) => ({ id: i + 1, no: i + 1, cabinNumber: '', name: '', timeIn: '', timeOut: '', amount: '', isManualAmount: false, isLocked: false })),
-        workers: [ { id: 1, name: 'Sajid', salary: 30000, advance: 5000, bonus: 0, rating: 0 }, { id: 2, name: 'Nasir', salary: 25000, advance: 0, bonus: 1000, rating: 0 }, { id: 3, name: 'Ali', salary: 28000, advance: 12000, bonus: 0, rating: 0 } ],
-        expenses: [ { id: 1, item: 'Shop Rent (Main)', cost: 0, date: '', isSpecial: false }, { id: 2, item: 'Shop Rent (Shop 2)', cost: 0, date: '', isSpecial: false }, { id: 3, item: 'KE Electric Bill', cost: 0, date: '', isSpecial: false }, { id: 4, item: 'Internet Bill', cost: 0, date: '', isSpecial: false }, { id: 5, item: 'Generator Maintenance', cost: 0, date: '', isSpecial: true, type: 'generator' }, { id: 6, item: 'Tea & Refreshment', cost: 0, date: '', isSpecial: true, type: 'tea' } ]
+        users: [] as any[],  // Empty — rows are added manually only
+        workers: [] as any[], // Empty — workers are added manually only
+        expenses: [ { id: 1, item: 'Shop Rent (Main)', cost: 0, date: '', isSpecial: false }, { id: 2, item: 'Shop Rent (Shop 2)', cost: 0, date: '', isSpecial: false }, { id: 3, item: 'KE Electric Bill', cost: 0, date: '', isSpecial: false }, { id: 4, item: 'Internet Bill', cost: 0, date: '', isSpecial: false }, { id: 5, item: 'Generator Maintenance', cost: 0, date: '', isSpecial: true, type: 'generator' }, { id: 6, item: 'Tea & Refreshment', cost: 0, date: '', isSpecial: true, type: 'tea' } ],
+        notes: Array.from({ length: 150 }, (_, i) => ({ id: i + 1, a: '', b: '' }))
     };
 
-    // Get current day's data
+    // Get current day's data — only use saved data, never auto-fill
     let currentDayData = { ...defaultData };
     if (masterData[key]) {
       currentDayData = { ...masterData[key] };
+      // ── Ghost-row filter (runtime) ──────────────────────────────────────
+      // Named rows are always kept. Draft rows (isDraft:true) are kept only
+      // when the user has typed ANY data into them (cabin / time / amount);
+      // fully-empty draft entries fall through so the pad regenerates them.
+      // Old ghost rows (no name, not a draft) are always stripped.
+      // NOTE: sanitizeMasterData (save path) still strips ALL nameless rows
+      // from localStorage, so only named rows are ever persisted to disk.
+      if (Array.isArray(currentDayData.users)) {
+        currentDayData.users = currentDayData.users.filter((u: any) => {
+          if (u.name && String(u.name).trim() !== '') return true; // named row
+          if (u.isDraft) {
+            // keep draft rows that have any partial data entered
+            const hasPartial =
+              (u.cabinNumber && String(u.cabinNumber).trim() !== '') ||
+              (u.timeIn     && String(u.timeIn).trim()     !== '') ||
+              (u.timeOut    && String(u.timeOut).trim()    !== '') ||
+              (u.amount     && String(u.amount).trim()     !== '' && String(u.amount).trim() !== '0');
+            return !!hasPartial;
+          }
+          return false; // pure ghost row — strip it
+        });
+      }
+      // ────────────────────────────────────────────────────────────────────
     }
 
-    // Add archived data for this date to the top of the users list
+    // Merge archived rows for this date at the top
     const archivedForDate = archivedData.filter((archive: any) => archive.date === key);
-    let combinedUsers = [...currentDayData.users]; // Start with current users
+    let combinedUsers = [...(currentDayData.users || [])];
 
-    // Add archived users to the top of the list
     archivedForDate.forEach((archive: any) => {
       const archivedUsersWithMetadata = archive.users.map((user: any) => ({
         ...user,
-        isArchived: true, // Mark as archived
-        isLocked: true    // Archived rows are locked
+        isArchived: true,
+        isLocked: true,
       }));
       combinedUsers = [...archivedUsersWithMetadata, ...combinedUsers];
     });
-
-    // Ensure we have exactly 300 users total (fill with empty slots if needed)
-    while (combinedUsers.length < 300) {
-      combinedUsers.push({
-        id: combinedUsers.length + 1,
-        no: combinedUsers.length + 1,
-        cabinNumber: '',
-        name: '',
-        timeIn: '',
-        timeOut: '',
-        amount: '',
-        isManualAmount: false,
-        isLocked: false,
-        isArchived: false
-      } as any); // Type assertion to bypass strict typing
-    }
-
-    // Truncate to 300 if we have too many
-    combinedUsers = combinedUsers.slice(0, 300);
 
     // Update the currentDayData with the combined users
     const resultData = {
@@ -682,6 +656,31 @@ export default function ClickDashboard() {
       if(e.type === 'tea') return {...e, cost: teaLogs.reduce((s,i)=>s+i.amount,0)};
       return e;
     });
+
+    // ── Pad to 200 draft rows (never saved — stripped by sanitizeMasterData) ──
+    const namedCount = resultData.users.length;
+    const needed = Math.max(0, 200 - namedCount);
+    if (needed > 0) {
+      // Build a set of all IDs already in use (named rows may have negative IDs
+      // if they were promoted from a draft slot)
+      const usedIds = new Set<number>(resultData.users.map((u: any) => u.id as number));
+      let nextId = -1;
+      const draftRows: any[] = [];
+      for (let i = 0; i < needed; i++) {
+        while (usedIds.has(nextId)) nextId--;
+        usedIds.add(nextId);
+        draftRows.push({
+          id: nextId,
+          no: namedCount + i + 1,
+          cabinNumber: '', name: '', timeIn: '', timeOut: '', amount: '',
+          isManualAmount: false, isLocked: false, isDraft: true,
+        });
+        nextId--;
+      }
+      resultData.users = [...resultData.users, ...draftRows];
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     return resultData;
   };
   const currentData = getCurrentData();
@@ -773,8 +772,8 @@ export default function ClickDashboard() {
       }
     }
 
-    if (e.key === 'Enter' || e.key === 'ArrowRight') { e.preventDefault(); if (currentIndex < currentFields.length - 1) { const nextField = currentFields[currentIndex + 1]; const el = document.getElementById(`${nextField}-${id}`); if (el) (el as HTMLInputElement).focus(); } else { if (rowIdx < dataList.length - 1) { const nextId = dataList[rowIdx + 1].id; const nextField = currentFields[0]; const el = document.getElementById(`${nextField}-${nextId}`); if (el) (el as HTMLInputElement).focus(); } } }
-    else if (e.key === 'ArrowLeft') { e.preventDefault(); if (currentIndex > 0) { const prevField = currentFields[currentIndex - 1]; const el = document.getElementById(`${prevField}-${id}`); if (el) (el as HTMLInputElement).focus(); } else { if (rowIdx > 0) { const prevId = dataList[rowIdx - 1].id; const prevField = currentFields[currentFields.length - 1]; const el = document.getElementById(`${prevField}-${prevId}`); if (el) (el as HTMLInputElement).focus(); } } }
+    if (e.key === 'Enter' || e.key === 'ArrowRight' || (e.key === 'Tab' && !e.shiftKey)) { e.preventDefault(); if (currentIndex < currentFields.length - 1) { const nextField = currentFields[currentIndex + 1]; const el = document.getElementById(`${nextField}-${id}`); if (el) (el as HTMLInputElement).focus(); } else { if (rowIdx < dataList.length - 1) { const nextId = dataList[rowIdx + 1].id; const nextField = currentFields[0]; const el = document.getElementById(`${nextField}-${nextId}`); if (el) (el as HTMLInputElement).focus(); } } }
+    else if (e.key === 'ArrowLeft' || (e.key === 'Tab' && e.shiftKey)) { e.preventDefault(); if (currentIndex > 0) { const prevField = currentFields[currentIndex - 1]; const el = document.getElementById(`${prevField}-${id}`); if (el) (el as HTMLInputElement).focus(); } else { if (rowIdx > 0) { const prevId = dataList[rowIdx - 1].id; const prevField = currentFields[currentFields.length - 1]; const el = document.getElementById(`${prevField}-${prevId}`); if (el) (el as HTMLInputElement).focus(); } } }
     else if (e.key === 'ArrowDown') { e.preventDefault(); if (rowIdx < dataList.length - 1) { const nextId = dataList[rowIdx + 1].id; const el = document.getElementById(`${field}-${nextId}`); if (el) (el as HTMLInputElement).focus(); } }
     else if (e.key === 'ArrowUp') { e.preventDefault(); if (rowIdx > 0) { const prevId = dataList[rowIdx - 1].id; const el = document.getElementById(`${field}-${prevId}`); if (el) (el as HTMLInputElement).focus(); } }
     // Handle backspace: if current field is empty, move to previous field
@@ -806,15 +805,7 @@ export default function ClickDashboard() {
       updateTodayNames(value);
     }
     const user = currentData.users.find((u:any) => u.id === id);
-    if (user && user.isLocked) return;
-
-    // Play typing sound for certain fields
-    if (['name', 'amount', 'timeIn', 'timeOut', 'cabinNumber'].includes(field)) {
-      playTypingSound();
-      // Trigger animation for the row
-      setTypingAnimationTrigger(id);
-      setTimeout(() => setTypingAnimationTrigger(null), 150); // Reset after animation
-    }
+    if (user && user.isLocked && field !== 'cabinNumber') return;
 
     // If updating the amount field, set isManualAmount to true
     const newUsers = currentData.users.map((u: any) => {
@@ -836,15 +827,20 @@ export default function ClickDashboard() {
     updateMasterData('users', newUsers);
   };
 
-  // Function to check and update locking status when user finishes editing
+  // Freeze row as soon as Amount is filled (Enter or blur on amount field)
   const checkAndLockRow = (id: any) => {
     const user = currentData.users.find((u: any) => u.id === id);
     if (!user) return;
 
-    // Only update locking status if both fields are filled
     const newUsers = currentData.users.map((u: any) => {
       if (u.id === id) {
-        if (u.amount && u.amount.trim() !== '' && u.timeOut && u.timeOut.trim() !== '') {
+        // Freeze when amount is non-empty (regardless of timeOut)
+        if (u.amount && u.amount.trim() !== '') {
+          // Append to Munshi monthly index on first lock (skip re-locks)
+          if (!u.isLocked && u.name && u.name.trim()) {
+            const dateKey = getStorageKey(currentDate, selectedDay);
+            appendMunshiRecord(u, dateKey);
+          }
           return { ...u, isLocked: true };
         }
       }
@@ -853,11 +849,19 @@ export default function ClickDashboard() {
 
     updateMasterData('users', newUsers);
   };
+
   const toggleSelect = (id: any) => { const newSelected = new Set(selectedIds); if (newSelected.has(id)) newSelected.delete(id); else newSelected.add(id); setSelectedIds(newSelected); };
   const updateWorker = (id: any, field: string, value: any) => { const newWorkers = currentData.workers.map((w: any) => w.id === id ? { ...w, [field]: value === '' ? 0 : Number(value) } : w); updateMasterData('workers', newWorkers); };
   const updateWorkerRating = (id: any, newRating: number) => { const newWorkers = currentData.workers.map((w: any) => w.id === id ? { ...w, rating: newRating } : w); updateMasterData('workers', newWorkers); };
   const updateWorkerName = (id: any, value: string) => { const newWorkers = currentData.workers.map((w: any) => w.id === id ? { ...w, name: value } : w); updateMasterData('workers', newWorkers); };
   const updateExpense = (id: any, field: string, value: any) => { const newExpenses = currentData.expenses.map((e: any) => e.id === id ? { ...e, [field]: value } : e); updateMasterData('expenses', newExpenses); };
+  const updateNote = (id: number, field: 'a' | 'b', value: string) => { const currentNotes = currentData.notes || Array.from({ length: 150 }, (_: any, i: number) => ({ id: i + 1, a: '', b: '' })); const newNotes = currentNotes.map((n: any) => n.id === id ? { ...n, [field]: value } : n); updateMasterData('notes', newNotes); };
+  const addUserRow = useCallback(() => {
+    const existing = currentData.users || [];
+    const newNo = existing.length + 1;
+    const newRow = { id: Date.now(), no: newNo, cabinNumber: '', name: '', timeIn: '', timeOut: '', amount: '', isManualAmount: false, isLocked: false };
+    updateMasterData('users', [...existing, newRow]);
+  }, [currentData.users, updateMasterData]);
   const addWorker = () => updateMasterData('workers', [...currentData.workers, { id: Date.now(), name: 'New Worker', salary: 0, advance: 0, bonus: 0, rating: 0 }]);
   const addExpense = () => updateMasterData('expenses', [...currentData.expenses, { id: Date.now(), item: 'New Expense', cost: 0, date: '', isSpecial: false }]);
   const addSubLog = (type: 'generator' | 'tea') => { const newItem = { id: Date.now(), date: new Date().toISOString().split('T')[0], desc: '', amount: 0 }; if (type === 'generator') setGeneratorLogs([...generatorLogs, newItem]); if (type === 'tea') setTeaLogs([...teaLogs, newItem]); };
@@ -882,18 +886,32 @@ export default function ClickDashboard() {
 
   // Calculate section totals for reports panel
   const section1Total = currentData.users
-    .slice(0, 100)
+    .slice(0, 150)
     .reduce((sum: number, user: any) => sum + (Number(user.amount) || 0), 0);
 
   const section2Total = currentData.users
-    .slice(100, 200)
+    .slice(150, 300)
     .reduce((sum: number, user: any) => sum + (Number(user.amount) || 0), 0);
 
-  const section3Total = currentData.users
-    .slice(200, 300)
-    .reduce((sum: number, user: any) => sum + (Number(user.amount) || 0), 0);
+  const grandTotal = section1Total + section2Total;
+  const totalInventoryCost = cafeItems.reduce((sum, item) => sum + (Number(item.price) || 0), 0);
+  const netBalance = grandTotal - totalInventoryCost;
 
-  const grandTotal = section1Total + section2Total + section3Total;
+  // ── Sync net balance → CLICK_NET_SALES (feeds HISAB "Daily Sale" column) ──
+  useEffect(() => {
+    const dateKey = getStorageKey(currentDate, selectedDay);
+    try {
+      const store: Record<string, number> = JSON.parse(localStorage.getItem('CLICK_NET_SALES') || '{}');
+      store[dateKey] = netBalance;
+      localStorage.setItem('CLICK_NET_SALES', JSON.stringify(store));
+      // Notify any same-window listener (e.g. HISAB page in another component)
+      window.dispatchEvent(new CustomEvent('click-net-sales-updated', { detail: { dateKey, value: netBalance } }));
+    } catch { /* quota */ }
+    setHisabDotActive(true);
+    const timer = setTimeout(() => setHisabDotActive(false), 3000);
+    return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [netBalance, selectedDay, currentDate]);
 
   // Cafe inventory functions
   const addCafeItem = () => {
@@ -911,54 +929,8 @@ export default function ClickDashboard() {
 
   const totalCafeSale = cafeItems.reduce((sum, item) => sum + item.price, 0);
 
-  // Function to force sync all records by resetting their sync status to 'pending'
   const forceSyncNow = async () => {
-    try {
-      // Use the new forceSyncAllRecords method from syncService
-      await syncService.forceSyncAllRecords();
-    } catch (error) {
-      console.error('Force sync failed:', error);
-    }
-  };
-
-  // Function to force sync all records (same as forceSyncNow, but for the new button)
-  const forceSyncAllRecords = async () => {
-    try {
-      // Use the forceSyncAllRecords method from syncService to reset all records and sync them
-      await syncService.forceSyncAllRecords();
-    } catch (error) {
-      console.error('Force sync all records failed:', error);
-    }
-  };
-
-  // Mechanical typing sound effect
-  const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
-
-  const playTypingSound = () => {
-    // Create audio context on first interaction to comply with autoplay policies
-    if (!audioContext) {
-      const newAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-      setAudioContext(newAudioContext);
-    } else {
-      // Create oscillator for the typing sound
-      const oscillator = audioContext.createOscillator();
-      const gainNode = audioContext.createGain();
-
-      oscillator.connect(gainNode);
-      gainNode.connect(audioContext.destination);
-
-      // Configure sound parameters for a "tak tak tak" mechanical keyboard sound
-      oscillator.type = 'square';
-      oscillator.frequency.setValueAtTime(150 + Math.random() * 100, audioContext.currentTime);
-
-      // Configure volume envelope
-      gainNode.gain.setValueAtTime(0, audioContext.currentTime);
-      gainNode.gain.linearRampToValueAtTime(0.1, audioContext.currentTime + 0.005);
-      gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.1);
-
-      oscillator.start(audioContext.currentTime);
-      oscillator.stop(audioContext.currentTime + 0.1);
-    }
+    try { await syncService.forceSyncAllRecords(); } catch (_) {}
   };
 
   // Backup functionality
@@ -971,7 +943,7 @@ export default function ClickDashboard() {
     try {
       await backupService.manualBackup();
       // Show success notification
-      setBackupNotificationMessage('Backup created and sent successfully!');
+      setBackupNotificationMessage('✅ Backup sent to muhammad.zahid.imam@gmail.com');
       setBackupNotificationType('success');
       setShowBackupNotification(true);
 
@@ -1077,6 +1049,63 @@ export default function ClickDashboard() {
   };
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
+  // ── Smart Munshi: today-only instant search ──
+  useEffect(() => {
+    if (!munshiQuery.trim()) { setMunshiResult(null); setMunshiSearching(false); return; }
+    setMunshiSearching(true);
+    if (munshiDebounceRef.current) clearTimeout(munshiDebounceRef.current);
+    munshiDebounceRef.current = setTimeout(() => {
+      const target = munshiQuery.trim().toLowerCase();
+      const todayKey = getStorageKey(currentDate, selectedDay);
+      const todayDisplay = new Date(currentDate.getFullYear(), currentDate.getMonth(), selectedDay)
+        .toLocaleDateString('en-PK', { day: 'numeric', month: 'short', year: 'numeric' });
+
+      // Strictly filter only today's rows from live state — no history scan
+      const matches: any[] = currentData.users.filter(
+        (u: any) => u.name && u.name.trim().toLowerCase().includes(target)
+      );
+
+      if (matches.length === 0) {
+        setMunshiResult(null);
+      } else {
+        const totalAmount = matches.reduce((s: number, u: any) => s + (Number(u.amount) || 0), 0);
+        const totalVisits = matches.length;
+        const avgAmount = totalVisits > 0 ? Math.round(totalAmount / totalVisits) : 0;
+
+        const cabinCounts: { [k: string]: number } = {};
+        matches.forEach((u: any) => {
+          if (u.cabinNumber?.trim()) cabinCounts[u.cabinNumber] = (cabinCounts[u.cabinNumber] || 0) + 1;
+        });
+        const commonCabin =
+          Object.keys(cabinCounts).sort((a, b) => cabinCounts[b] - cabinCounts[a])[0] || '--';
+
+        const recentVisits = matches.map((u: any) => ({
+          name: u.name,
+          cabinNumber: u.cabinNumber || '',
+          timeIn: u.timeIn || '',
+          timeOut: u.timeOut || '',
+          amount: Number(u.amount) || 0,
+          date: todayDisplay,
+          dateKey: todayKey,
+          monthKey: '',
+        }));
+
+        setMunshiResult({
+          name: matches[0].name,
+          totalVisits,
+          totalAmount,
+          avgAmount,
+          lastVisitDate: todayDisplay,
+          firstVisitDate: todayDisplay,
+          commonCabin,
+          recentVisits,
+        });
+      }
+      setMunshiSearching(false);
+    }, 300);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [munshiQuery]);
+
   const renderPoliceModal = () => { if (!policeAlert) return null; return (<div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in zoom-in duration-300"><div className="w-full max-w-2xl bg-red-950/90 border-4 border-red-500 rounded-3xl p-10 text-center animate-siren shadow-[0_0_100px_rgba(220,38,38,0.5)]"><h1 className="text-8xl mb-6">🚨</h1><h2 className="text-5xl font-black text-white uppercase mb-6 drop-shadow-lg tracking-widest">WARNING!</h2><p className="text-2xl font-bold text-white bg-black/50 p-6 rounded-xl border-2 border-red-400/50 mb-8 leading-relaxed">Admin ki taraf se ye user Allow nh hai foran police ko call karo</p><button onClick={() => setPoliceAlert(false)} className="bg-white text-red-900 font-black px-12 py-4 rounded-full text-2xl hover:scale-110 transition-transform shadow-xl uppercase">OK BOSS</button></div></div>); }
   const renderAuthModal = () => { if (!showAuthModal) return null; let modalTitle = "Security Check"; if (authAction.type === 'UNLOCK_ROW') modalTitle = "Unlock Row"; if (authAction.type === 'RATE_WORKER') modalTitle = "Admin Rating Access"; if (authAction.type === 'DELETE_WORKER' || authAction.type === 'DELETE_EXPENSE') modalTitle = "Confirm Delete"; return (<div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-xl flex items-center justify-center p-4"><div className={`bg-slate-900 border-2 ${authError ? 'border-red-500 animate-pulse' : t.border} p-8 rounded-3xl w-full max-w-sm flex flex-col items-center text-center ${t.glow}`}><div className="mb-6 bg-slate-800 p-4 rounded-full">{authError ? <span className="text-4xl">⛔</span> : <span className="text-4xl">🔒</span>}</div><h2 className="text-2xl font-black text-white mb-2 tracking-widest uppercase">{modalTitle}</h2><input type="password" autoFocus value={passwordInput} onChange={(e) => { setPasswordInput(e.target.value); setAuthError(false); }} onKeyDown={(e) => e.key === 'Enter' && handleLogin()} placeholder="PIN CODE" className="bg-black/50 border border-slate-600 text-center text-3xl text-white font-mono tracking-[0.5em] w-full p-4 rounded-xl focus:outline-none focus:border-cyan-500 mb-6 placeholder-slate-700" maxLength={9}/><button onClick={handleLogin} className={`w-full py-4 rounded-xl font-bold text-white shadow-lg ${t.button}`}>CONFIRM</button><button onClick={() => { setShowAuthModal(false); setAuthError(false); setPasswordInput(''); }} className="mt-4 text-slate-500 text-xs hover:text-white">Cancel</button></div></div>); };
   const renderChangePassModal = () => { if (!showChangePassModal) return null; return (<div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-md flex items-center justify-center p-4"><div className="bg-slate-900 border border-purple-500 p-8 rounded-2xl w-full max-w-sm text-center shadow-2xl"><h2 className="text-xl font-bold text-purple-400 mb-4 uppercase">Change Password</h2><input type="text" value={newPassInput} onChange={(e) => setNewPassInput(e.target.value)} placeholder="New PIN Code" className="bg-black/50 border border-slate-700 text-white text-center text-xl p-3 rounded-lg w-full mb-4 focus:border-purple-500 outline-none"/><div className="flex gap-2"><button onClick={handleChangePassword} className="flex-1 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg font-bold">Save</button><button onClick={() => setShowChangePassModal(false)} className="flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg">Cancel</button></div></div></div>); };
@@ -1092,7 +1121,7 @@ export default function ClickDashboard() {
       <button onClick={() => setShowChangePassModal(true)} className="absolute top-4 right-4 bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1 rounded-full text-xs font-bold border border-slate-600 flex items-center gap-1 z-50">⚙️ Pass</button>
       <div className="text-center mb-8 animate-in zoom-in duration-1000">
         <h1 className="text-3xl md:text-5xl font-black mb-2 text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 via-cyan-500 to-purple-600 drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] tracking-tighter">FINANCIAL HQ</h1>
-        <p className={`text-sm font-light tracking-[0.2em] uppercase ${t.textAccent}`}>Welcome Mr. Rashid Imam</p>
+        <p className={`text-sm font-bold tracking-[0.2em] uppercase text-orange-400`}>Welcome Mr. <span className="text-white font-black">Zahid ImAm</span></p>
       </div>
       <div className="mb-4 flex flex-col items-center gap-3">
         <button
@@ -1102,7 +1131,7 @@ export default function ClickDashboard() {
           🔄 SYNC NOW
         </button>
         <button
-          onClick={forceSyncAllRecords}
+          onClick={forceSyncNow}
           className="px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-700 hover:from-purple-500 hover:to-indigo-600 text-white rounded-full font-bold shadow-lg border border-white/20 flex items-center gap-2"
         >
           🚀 FORCE SYNC ALL
@@ -1183,51 +1212,65 @@ export default function ClickDashboard() {
 
   const renderDetailsModal = () => { if (!activeModal) return null; const isGen = activeModal === 'generator'; const logs = isGen ? generatorLogs : teaLogs; const modalTotal = logs.reduce((s, i) => s + i.amount, 0); return (<div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in duration-200"><div className={`relative w-full max-w-4xl ${t.panelBg} border-2 ${t.border} rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]`}><div className="p-6 border-b border-white/10 flex justify-between items-center bg-black/20"><div><h2 className={`text-3xl font-black italic tracking-tighter ${t.textAccent} drop-shadow-md`}>{isGen ? "GENERATOR" : "TEA"}</h2></div><button onClick={() => setActiveModal(null)} className="w-10 h-10 rounded-full bg-white/10 hover:bg-red-500 text-white flex items-center justify-center">✕</button></div><div className="p-6 overflow-y-auto custom-scrollbar flex-1"><table className="w-full text-left text-sm text-white/80"><thead className={`uppercase text-xs font-bold ${t.textAccent} border-b border-white/10`}><tr><th className="p-3">Date</th><th className="p-3">Description</th><th className="p-3 text-right">Cost</th></tr></thead><tbody className="divide-y divide-white/10">{logs.map((log) => (<tr key={log.id} className="hover:bg-white/5 transition-colors"><td className="p-3"><input type="date" value={log.date} onChange={(e)=>updateSubLog(activeModal, log.id, 'date', e.target.value)} className="bg-transparent outline-none text-white/70"/></td><td className="p-3"><input value={log.desc} placeholder="Item details..." onChange={(e)=>updateSubLog(activeModal, log.id, 'desc', e.target.value)} className="bg-transparent outline-none w-full placeholder-white/20"/></td><td className="p-3 text-right"><input type="number" value={log.amount} onChange={(e)=>updateSubLog(activeModal, log.id, 'amount', e.target.value)} className={`bg-transparent outline-none text-right font-bold text-xl ${t.textAccent} w-32`}/></td></tr>))}</tbody></table><button onClick={() => addSubLog(activeModal)} className={`mt-6 w-full py-3 rounded-xl border border-dashed border-white/30 text-white/50 hover:bg-white/5 hover:text-white transition-all uppercase font-bold tracking-widest`}>+ Add Entry</button></div><div className="p-6 bg-black/40 border-t border-white/10 flex justify-between items-center"><span className="text-white/50 uppercase tracking-widest font-bold">Total Cost</span><span className={`text-4xl font-black ${t.textAccent}`}>{modalTotal.toLocaleString()}</span></div></div></div>); };
 
-  const renderMonthNavigator = () => (
-    <div className={`flex items-center gap-4 ${t.panelBg} rounded-lg p-1 border ${t.border} min-w-[200px]`}>
+  const goToToday = () => {
+    const t2 = new Date();
+    setCurrentDate(new Date(t2.getFullYear(), t2.getMonth(), 1));
+    setSelectedDay(t2.getDate());
+    setSelectedIds(new Set());
+  };
+
+  const renderMonthNavigator = () => {
+    // Build the date string in LOCAL time (avoids UTC-offset shift bug)
+    const y  = currentDate.getFullYear();
+    const m  = String(currentDate.getMonth() + 1).padStart(2, '0');
+    const d  = String(selectedDay).padStart(2, '0');
+    const dateValue = `${y}-${m}-${d}`;
+
+    return (
+    <div className={`flex items-center gap-2 ${t.panelBg} rounded-lg p-1 border ${t.border} min-w-[200px]`}>
       <button onClick={() => changeMonth(-1)} className={`w-8 h-8 flex items-center justify-center rounded hover:bg-white/10 hover:text-white transition-colors ${t.textAccent}`}>◀</button>
       <input
         type="date"
-        value={new Date(currentDate.getFullYear(), currentDate.getMonth(), selectedDay).toISOString().split('T')[0]}
+        value={dateValue}
         onChange={(e) => {
-          const newDate = new Date(e.target.value);
-          setCurrentDate(new Date(newDate.getFullYear(), newDate.getMonth(), 1)); // Set to first day of month
-          setSelectedDay(newDate.getDate());
+          const val = e.target.value; // "YYYY-MM-DD"
+          if (!val) return;
+          // Parse manually — new Date(string) treats it as UTC and shifts the day
+          const [ny, nm, nd] = val.split('-').map(Number);
+          setCurrentDate(new Date(ny, nm - 1, 1)); // month is 0-indexed
+          setSelectedDay(nd);
           setSelectedIds(new Set());
         }}
         className={`bg-transparent text-sm font-bold ${t.textMain} uppercase tracking-widest w-full text-center select-none truncate px-2 py-1 border-none outline-none cursor-pointer`}
       />
       <button onClick={() => changeMonth(1)} className={`w-8 h-8 flex items-center justify-center rounded hover:bg-white/10 hover:text-white transition-colors ${t.textAccent}`}>▶</button>
+      {/* Go to Today */}
+      <button
+        onClick={goToToday}
+        title="Go to Today"
+        className="text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded border border-white/10 text-slate-500 hover:text-white hover:border-white/30 transition-colors whitespace-nowrap ml-1"
+      >Today</button>
     </div>
-  );
+  )};
   const renderCabinsLeftCounter = () => {
-    // Get all occupied cabin numbers from the current data across all users
+    // Collect occupied cabin numbers (1-30 range only)
     const occupiedCabinNumbers = new Set(
       currentData.users
         .filter((user: any) => user.cabinNumber && user.cabinNumber.trim() !== '')
         .map((user: any) => parseInt(user.cabinNumber))
-        .filter((num: number) => !isNaN(num) && num >= 1 && num <= 60)
+        .filter((num: number) => !isNaN(num) && num >= 1 && num <= 30)
     );
 
-    // Generate cabin numbers 1-60, only showing available (not occupied) cabins
-    const availableCabins = Array.from({ length: 60 }, (_, i) => i + 1)
-      .filter(cabinNum => !occupiedCabinNumbers.has(cabinNum));
-
     return (
-      <div className={`border-b ${t.border} py-2 px-4 overflow-x-auto custom-scrollbar-no-display shrink-0 glass-panel`}>
-        <div className="flex gap-1 justify-start" style={{ minWidth: 'max-content' }}>
-          {availableCabins.map(cabinNum => {
-            // All displayed cabins are now available since we filtered out occupied ones
-            const cabinClass = `${t.textHighlight} ${t.button} bg-opacity-20 border-white/50`;
-
+      <div className={`border-b ${t.border} py-2 px-4 shrink-0 glass-panel`}>
+        <div className="flex gap-1 flex-wrap">
+          {Array.from({ length: 30 }, (_, i) => i + 1).map(cabinNum => {
+            const isOccupied = occupiedCabinNumbers.has(cabinNum);
             return (
               <div
                 key={cabinNum}
-                className={`
-                  w-8 h-8 flex items-center justify-center text-xs font-bold rounded-[4px]
-                  border transition-all duration-200 ${cabinClass}
-                  ${t.glow}
-                `}
+                style={{ visibility: isOccupied ? 'hidden' : 'visible' }}
+                className={`w-8 h-8 flex items-center justify-center text-xs font-bold rounded-[4px] border transition-all duration-300 ${t.textHighlight} ${t.button} bg-opacity-20 border-white/50 ${t.glow}`}
               >
                 {cabinNum}
               </div>
@@ -1238,12 +1281,32 @@ export default function ClickDashboard() {
     );
   };
 
-  const renderUserBlock = (start: number, end: number) => {
-    let blockTitle = "NAME"; if(start===0) blockTitle="NAME"; if(start===200) blockTitle="NAME";
+  const renderNotesColumn = () => {
+    const notes = currentData.notes || Array.from({ length: 150 }, (_: any, i: number) => ({ id: i + 1, a: '', b: '' }));
+    const inputCls = "w-full h-7 bg-black/20 border border-dotted border-yellow-700/40 text-yellow-400/80 text-[9px] text-center focus:outline-none focus:border-yellow-500 rounded-sm placeholder-yellow-900/30 font-mono";
+    return (
+      <div className="flex flex-col">
+        {/* Header spacer — matches renderUserBlock header height */}
+        <div className={`sticky top-0 z-10 ${t.panelBg} flex items-center justify-center`} style={{ height: '38px', paddingBottom: '8px' }}>
+          <span className="text-[7px] text-yellow-700/60 uppercase tracking-widest font-bold">rough</span>
+        </div>
+        {notes.map((note: any) => (
+          <div key={note.id} className="h-12 mx-0.5 my-2 flex items-center gap-0.5">
+            <input type="text" value={note.a} onChange={(e) => updateNote(note.id, 'a', e.target.value)} className={inputCls} placeholder="·" maxLength={12} />
+            <input type="text" value={note.b} onChange={(e) => updateNote(note.id, 'b', e.target.value)} className={inputCls} placeholder="·" maxLength={12} />
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const renderUserBlock = (start: number, end: number, noteField: 'a' | 'b' = 'a') => {
+    const notes = (currentData as any).notes || Array.from({ length: 150 }, (_: any, i: number) => ({ id: i + 1, a: '', b: '' }));
     return (
     <div className={`${t.panelBg} backdrop-blur-sm overflow-hidden`} style={{ tableLayout: 'fixed', width: '100%' }}>
-      <div className={`flex font-bold text-[10px] uppercase p-2 sticky top-0 z-10 ${t.panelBg} ${t.textAccent}`} style={{paddingBottom: '8px', display: 'flex', width: '100%', tableLayout: 'fixed'}}><div className="w-[10%] text-center" style={{width: '10%'}}>No</div><div className="w-[10%] text-center" style={{width: '10%'}}>Cabin</div><div className="w-[45%] px-1" style={{width: '45%'}}>NAME</div><div className="w-[15%] text-center" style={{width: '15%'}}>In</div><div className="w-[15%] text-center" style={{width: '15%'}}>Out</div><div className="w-[15%] text-right" style={{width: '15%'}}>Amt</div></div>
-      {currentData.users.slice(start, end).map((user: any) => {
+      <div className={`flex font-bold text-[10px] uppercase p-2 sticky top-0 z-10 ${t.panelBg} ${t.textAccent}`} style={{paddingBottom: '8px', display: 'flex', width: '100%'}}><div className="text-center" style={{width: '7%'}}>No</div><div className="text-center" style={{width: '7%'}}>Cabin</div><div className="px-1" style={{width: '28%'}}>NAME</div><div className="text-center" style={{width: '11%'}}>In</div><div className="text-center" style={{width: '11%'}}>Out</div><div className="text-center text-cyan-400" style={{width: '12%'}}>DUR</div><div className="text-right" style={{width: '12%'}}>Amt</div><div className="text-center text-yellow-600/70" style={{width: '12%'}}>~</div></div>
+      {currentData.users.slice(start, end).map((user: any, sliceIndex: number) => {
+        const rowNote = notes[sliceIndex] || { id: sliceIndex + 1, a: '', b: '' };
         const isSelected = selectedIds.has(user.id);
         const overdueMinutes = getOverdueMinutes(user.timeOut);
         const timeRemainingMinutes = getTimeRemainingMinutes(user.timeOut);
@@ -1264,9 +1327,10 @@ export default function ClickDashboard() {
 
         // For the row class, we distinguish between locked due to timeout and locked due to both fields filled
         const isLockedByTimeout = isTimeUp;
-        const isLockedByFields = user.isLocked && user.amount && user.amount.trim() !== '' && user.timeOut && user.timeOut.trim() !== '';
+        const isLockedByFields = user.isLocked && user.amount && user.amount.trim() !== '';
         const isLocked = isLockedByTimeout || isLockedByFields;
 
+        const isDraft = !!user.isDraft;
         const isArchived = user.isArchived || false;
         const isConflict = !isLocked && currentData.users.some((u: any) => u.id !== user.id && u.name && u.name.toLowerCase().trim() === user.name.toLowerCase().trim());
 
@@ -1309,25 +1373,23 @@ export default function ClickDashboard() {
         else if (isActiveSession) {
             rowClass += 'bg-emerald-900/30';
         } // Subtle background for active sessions
+        else if (isDraft) {
+            rowClass += 'bg-transparent border border-white/[0.04] focus-within:border-cyan-500/40 focus-within:ring-1 focus-within:ring-inset focus-within:ring-cyan-500/20 hover:border-white/[0.08]';
+        } // Empty draft row — barely visible until focused
         else {
             rowClass += 'bg-slate-900/50 hover:bg-slate-800/60';
         }
 
-        // Add shimmer effect when active
-        if (showShimmer && themeIndex === 8) { // Only for Crystal Glass Edition theme
+        // Always show shimmer for Crystal Glass Edition (pure CSS, no state)
+        if (themeIndex === 8) {
             rowClass += ' relative overflow-hidden';
         }
 
-        // Add animation class if this row is currently being typed in
-        if (typingAnimationTrigger === user.id) {
-          rowClass += ' animate-pulse scale-[1.02]';
-        }
-
         return (
-          <div key={user.id} className={`${rowClass} group relative`} style={{ display: 'flex', width: '100%', tableLayout: 'fixed' }}>
-            {/* Shimmer effect for Crystal Glass Edition */}
-            {showShimmer && themeIndex === 8 && (
-              <div className="absolute inset-0 shimmer pointer-events-none"></div>
+          <div key={isDraft ? `draft-${user.id}` : user.id} className={`${rowClass} group relative`} style={{ display: 'flex', width: '100%', tableLayout: 'fixed' }}>
+            {/* Shimmer overlay — Crystal Glass Edition only, CSS-driven */}
+            {themeIndex === 8 && (
+              <div className="absolute inset-0 shimmer"></div>
             )}
 
             {/* Tooltip for active sessions - NEW LOGIC: Show only when Time Out is empty */}
@@ -1336,27 +1398,26 @@ export default function ClickDashboard() {
                 ONLINE
               </div>
             )}
-            <div onClick={() => !isLockedByFields && toggleSelect(user.id)} className={`w-[10%] text-center font-mono ${isSelected || isLockedByFields ? 'text-white font-bold' : 'text-slate-500'}`}>
+            <div onClick={() => !isLockedByFields && !isDraft && toggleSelect(user.id)} className={`text-center font-mono`} style={{width: '7%', color: isDraft ? 'rgba(100,116,139,0.25)' : (isSelected || isLockedByFields ? 'white' : undefined), fontWeight: isSelected || isLockedByFields ? 'bold' : undefined}}>
               {user.no}
               {isArchived && <span className="ml-1 text-xs">📋</span>} {/* Indicator for archived rows */}
             </div>
             <input
-              disabled={isLockedByFields}  // Only disable if locked by both fields
               id={`cabinNumber-${user.id}`}
-              className="w-[10%] bg-transparent text-center text-lg font-bold focus:outline-none placeholder-slate-700 disabled:cursor-not-allowed disabled:text-white"
+              className={`bg-transparent text-center text-lg font-bold focus:outline-none placeholder-slate-700 ${isLockedByFields ? 'ring-1 ring-inset ring-slate-500/60 rounded text-slate-200' : ''}`}
               placeholder="--"
               value={user.cabinNumber}
               onChange={(e) => {
                 const value = e.target.value;
-                // Validate that it's a number between 1 and 60 with max 2 digits
-                if (value === '' || (/^\d{1,2}$/.test(value) && parseInt(value) >= 1 && parseInt(value) <= 60)) {
+                // Validate that it's a number between 1 and 30 with max 2 digits
+                if (value === '' || (/^\d{1,2}$/.test(value) && parseInt(value) >= 1 && parseInt(value) <= 30)) {
                   updateUser(user.id, 'cabinNumber', value);
                 }
               }}
               onKeyDown={(e) => handleUniversalKeyDown(e, user.id, 'cabinNumber', currentData.users, 'users')}
-              style={{ width: '10%' }}
+              style={{ width: '7%' }}
             />
-            <div className="relative w-[45%] name-input-wrapper" style={{ width: '45%' }}>
+            <div className="relative name-input-wrapper" style={{ width: '28%' }}>
               <input
                 disabled={isLockedByFields}  // Only disable if locked by both fields
                 id={`name-${user.id}`}
@@ -1401,39 +1462,41 @@ export default function ClickDashboard() {
             <input
               disabled={isLockedByFields}
               id={`timeIn-${user.id}`}
-              className="w-[15%] bg-transparent text-center text-base font-bold text-slate-400 focus:outline-none placeholder-slate-700 font-mono disabled:cursor-not-allowed disabled:text-white"
+              className="bg-transparent text-center text-base font-bold text-slate-400 focus:outline-none placeholder-slate-700 font-mono disabled:cursor-not-allowed disabled:text-white"
               placeholder="--:--"
               value={user.timeIn}
               onChange={(e) => updateUser(user.id, 'timeIn', e.target.value)}
               onKeyDown={(e) => handleUniversalKeyDown(e, user.id, 'timeIn', currentData.users, 'users')}
-              style={{ width: '15%' }}
+              style={{ width: '11%' }}
             />
-            <div className="relative group/time" style={{ width: '15%' }}>
-              <input
-                disabled={isLockedByFields}
-                id={`timeOut-${user.id}`}
-                className={`w-[100%] bg-transparent text-center text-base font-bold focus:outline-none placeholder-slate-700 font-mono disabled:cursor-not-allowed disabled:text-white ${!isLockedByFields && isWarning ? 'text-red-400 font-black' : 'text-slate-400'}`}
-                placeholder="--:--"
-                value={user.timeOut}
-                onChange={(e) => updateUser(user.id, 'timeOut', e.target.value)}
-                onBlur={() => checkAndLockRow(user.id)}
-                onKeyDown={(e) => { if (e.key === 'Enter') checkAndLockRow(user.id); handleUniversalKeyDown(e, user.id, 'timeOut', currentData.users, 'users') }}
-                style={{ width: '100%' }}
-              />
-              {/* Hover time calculation tooltip */}
-              {user.timeIn && user.timeOut && (
-                <div className="absolute left-1/2 transform -translate-x-1/2 -top-8 bg-black/80 text-white text-xs px-2 py-1 rounded opacity-0 group-hover/time:opacity-100 transition-opacity pointer-events-none z-50 whitespace-nowrap">
-                  {calculateHours(user.timeIn, user.timeOut) ? `${calculateHours(user.timeIn, user.timeOut)} Hrs` : 'Invalid Time'}
-                </div>
+            <input
+              disabled={isLockedByFields}
+              id={`timeOut-${user.id}`}
+              className={`bg-transparent text-center text-base font-bold focus:outline-none placeholder-slate-700 font-mono disabled:cursor-not-allowed disabled:text-white ${!isLockedByFields && isWarning ? 'text-red-400 font-black' : 'text-slate-400'}`}
+              placeholder="--:--"
+              value={user.timeOut}
+              onChange={(e) => updateUser(user.id, 'timeOut', e.target.value)}
+              onBlur={() => checkAndLockRow(user.id)}
+              onKeyDown={(e) => { if (e.key === 'Enter') checkAndLockRow(user.id); handleUniversalKeyDown(e, user.id, 'timeOut', currentData.users, 'users') }}
+              style={{ width: '11%' }}
+            />
+            {/* DUR — Dedicated duration display column */}
+            {(() => { const dur = calculateTotalTime(user.timeIn, user.timeOut); return (
+            <div className="flex items-center justify-center" style={{ width: '12%' }}>
+              {dur ? (
+                <span className="text-cyan-400 text-xs font-black tracking-wide bg-cyan-500/10 border border-cyan-500/30 rounded px-1.5 py-0.5 leading-none">{dur}</span>
+              ) : (
+                <span className="text-slate-700 text-xs">—</span>
               )}
             </div>
-            <div className="amount-cell-wrapper relative w-[15%]" style={{ width: '15%', paddingLeft: '10px', paddingRight: '10px', boxSizing: 'border-box' }}>
+            );})()}
+            <div className="amount-cell-wrapper relative" style={{ width: '12%', paddingLeft: '6px', paddingRight: '6px', boxSizing: 'border-box' }}>
               <input
-                disabled={isLockedByTimeout}  // Only disable if locked due to timeout, not due to filled fields
+                disabled={isLockedByTimeout || isLockedByFields}
                 id={`amount-${user.id}`}
                 type="number"
                 className={`w-[100%] bg-transparent text-center text-lg font-black focus:outline-none placeholder-slate-700 disabled:cursor-not-allowed disabled:text-white ${(isLockedByTimeout || (isLockedByFields && !showTenMinuteWarning && !isWarning)) ? '' : t.textHighlight}`}
-                placeholder={user.isManualAmount ? "0" : calculateHours(user.timeIn, user.timeOut) || "0"}
+                placeholder="0"
                 value={user.amount}
                 onChange={(e) => updateUser(user.id, 'amount', e.target.value)}
                 onBlur={() => checkAndLockRow(user.id)}
@@ -1441,6 +1504,25 @@ export default function ClickDashboard() {
                 style={{ width: '100%' }}
               />
             </div>
+            {/* Rough Note box — manual scratch pad, no effect on calculations */}
+            <div style={{ width: '12%', paddingLeft: '4px', paddingRight: '4px', boxSizing: 'border-box' }} className="flex items-center">
+              <input
+                type="text"
+                value={rowNote[noteField]}
+                onChange={(e) => updateNote(rowNote.id, noteField, e.target.value)}
+                className="w-full bg-black/20 border border-dotted border-yellow-700/40 text-yellow-400/80 text-center focus:outline-none focus:border-yellow-500 rounded-sm placeholder-yellow-900/40 font-mono"
+                placeholder="~"
+                maxLength={6}
+                style={{
+                  fontSize: '12px',       // locked — never inherits parent font-bold or size changes
+                  lineHeight: '1',        // fixed line-height prevents vertical shift on freeze
+                  height: '28px',         // same as h-7 (1.75rem = 28px), explicit so it can't shift
+                  paddingTop: '0',
+                  paddingBottom: '0',
+                }}
+              />
+            </div>
+
           </div>
         );
       })}
@@ -1472,19 +1554,18 @@ export default function ClickDashboard() {
 
       }}
     >
-      <div className={`${isPortrait ? '' : 'mobile-landscape-scaler'}`}>
+      <div className={`flex flex-col h-full ${isPortrait ? '' : 'mobile-landscape-scaler'}`}>
         {renderDetailsModal()} {renderAuthModal()} {renderChangePassModal()} {renderPoliceModal()}
 
         <header className={`flex justify-between items-center px-4 py-2 ${t.panelBg} border-b ${t.border} shadow-2xl shrink-0 z-50 relative h-[70px] backdrop-blur-md`}>
           <div className="shrink-0 z-20">{renderMonthNavigator()}</div>
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10 overflow-hidden"><div className="animate-bounce-text flex items-center"><h1 className={`text-3xl md:text-5xl font-black tracking-tightest italic text-transparent bg-clip-text bg-gradient-to-r from-white via-white to-white drop-shadow-[0_3px_3px_rgba(0,0,0,0.5)] filter contrast-150 transform skew-x-[-10deg] px-4 opacity-50`}>✨ WELCOME CLICK INTERNET CAFE ✨</h1></div></div>
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10 overflow-hidden"><div className="animate-bounce-text flex items-center"><h1 className="text-3xl md:text-5xl font-black tracking-tightest italic text-transparent bg-clip-text bg-gradient-to-r from-orange-400 via-orange-500 to-yellow-400 drop-shadow-[0_0_12px_rgba(255,140,0,0.6)] transform skew-x-[-10deg] px-4 opacity-70">⚡ WELCOME SPIDER STATION ⚡</h1></div></div>
           <div className={`flex items-center gap-6 z-20 ${t.panelBg} pl-6 pr-2 rounded-l-2xl border-l ${t.border} py-1 shadow-xl`}>
              <button onClick={cycleTheme} className={`w-10 h-10 rounded-full ${t.button} shadow-lg border border-white/20 flex items-center justify-center text-lg hover:scale-110 transition-transform active:rotate-180 duration-500`} title="Switch Theme">🎨</button>
              <div className="flex flex-col items-end justify-center border-r border-slate-600 pr-6 mr-2">
                <span className="text-[10px] text-slate-400 uppercase tracking-[0.4em] leading-none mb-1">Owner</span>
-               <span className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-br from-yellow-200 via-yellow-500 to-yellow-700 drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] font-mono leading-none tracking-widest filter contrast-125">Rashid Imam</span>
+               <span className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-br from-orange-300 via-orange-500 to-orange-700 drop-shadow-[0_2px_8px_rgba(255,120,0,0.7)] font-sans leading-none tracking-widest filter contrast-125">Zahid ImAm</span>
              </div>
-             {currentView === 'users' && <div className="text-right"><p className="text-[9px] text-slate-400 uppercase tracking-widest leading-none mb-1">{displayLabel}</p><p className={`text-xl font-mono font-black leading-none ${t.textHighlight}`}>{displayTotal.toLocaleString()} <span className="text-[10px] text-slate-500">PKR</span></p></div>}
              {currentView === 'workers' && <div className="text-right"><p className="text-[9px] text-slate-400 uppercase tracking-widest leading-none mb-1">Payable</p><p className={`text-xl font-mono font-black leading-none ${t.textAccent}`}>{totalPayable.toLocaleString()} <span className="text-[10px] text-slate-500">PKR</span></p></div>}
              {currentView === 'expenses' && <div className="text-right"><p className="text-[9px] text-slate-400 uppercase tracking-widest leading-none mb-1">Total Exp</p><p className="text-xl font-mono font-black leading-none text-red-400">{totalExpenses.toLocaleString()} <span className="text-[10px] text-slate-500">PKR</span></p></div>}
           </div>
@@ -1494,11 +1575,20 @@ export default function ClickDashboard() {
 
         <main className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar p-2 relative" style={{ WebkitOverflowScrolling: 'touch' }}>
           {currentView === 'users' && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 pb-32 items-start h-[calc(100vh-200px)] overflow-hidden" style={{ width: '100%', tableLayout: 'fixed' }}>
-              <div className="overflow-y-auto max-h-[calc(100vh-200px)] custom-scrollbar" style={{ width: '100%', tableLayout: 'fixed', WebkitOverflowScrolling: 'touch' }}>{renderUserBlock(0, 100)}</div>
-              <div className="overflow-y-auto max-h-[calc(100vh-200px)] custom-scrollbar" style={{ width: '100%', tableLayout: 'fixed', WebkitOverflowScrolling: 'touch' }}>{renderUserBlock(100, 200)}</div>
-              <div className="overflow-y-auto max-h-[calc(100vh-200px)] custom-scrollbar" style={{ width: '100%', tableLayout: 'fixed', WebkitOverflowScrolling: 'touch' }}>{renderUserBlock(200, 300)}</div>
-            </div>
+            <>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start" style={{ width: '100%' }}>
+                <div style={{ width: '100%' }}>{renderUserBlock(0, Math.ceil((currentData.users || []).length / 2), 'a')}</div>
+                <div style={{ width: '100%' }}>{renderUserBlock(Math.ceil((currentData.users || []).length / 2), (currentData.users || []).length, 'b')}</div>
+              </div>
+              <div className="flex justify-center pb-32 pt-4">
+                <button
+                  onClick={addUserRow}
+                  className={`px-6 py-3 ${t.button} text-white rounded-lg font-bold border border-white/20 flex items-center gap-2 hover:opacity-80 transition-opacity`}
+                >
+                  <span className="text-lg">+</span> Add Row
+                </button>
+              </div>
+            </>
           )}
           {currentView === 'workers' && (
             <div className="pb-32 h-[calc(100vh-200px)] overflow-y-auto custom-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>
@@ -1597,37 +1687,61 @@ export default function ClickDashboard() {
           {currentView === 'analytics' && renderAnalytics()}
         </main>
 
-        <nav className={`shrink-0 ${t.panelBg} border-t ${t.border} p-2 flex justify-center gap-6 shadow-[0_-5px_20px_rgba(0,0,0,0.8)] z-50 backdrop-blur-md`}>
-          <button onClick={() => setCurrentView('users')} className={`flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-bold transition-all duration-300 ${currentView === 'users' ? `${t.button} text-white shadow-lg -translate-y-1` : 'bg-transparent text-slate-400 hover:text-white'}`}>👥 Users</button>
-          <button onClick={() => setCurrentView('workers')} className={`flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-bold transition-all duration-300 ${currentView === 'workers' ? `${t.button} text-white shadow-lg -translate-y-1` : 'bg-transparent text-slate-400 hover:text-white'}`}>👷 Workers</button>
-          <button onClick={() => setCurrentView('expenses')} className={`flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-bold transition-all duration-300 ${currentView === 'expenses' ? `${t.button} text-white shadow-lg -translate-y-1` : 'bg-transparent text-slate-400 hover:text-white'}`}>📉 Expenses</button>
-          <button onClick={() => setCurrentView('analytics')} className={`flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-bold transition-all duration-300 ${currentView === 'analytics' ? `${t.button} text-white shadow-lg -translate-y-1` : 'bg-transparent text-slate-400 hover:text-white'}`}>📊 Graph</button>
-          {/* AI BUTTON (FIXED BOTTOM RIGHT) */}
-          <button onClick={() => { setAuthAction({ type: 'ACCESS_HQ' }); setShowAuthModal(true); }} className={`flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-bold transition-all duration-300 ${currentView === 'financials' ? 'bg-purple-600 text-white shadow-lg -translate-y-1' : 'bg-transparent text-slate-400 hover:text-white'}`}>🔒 Financials</button>
+        <nav className={`shrink-0 ${t.panelBg} border-t ${t.border} p-2 flex justify-center items-center gap-3 shadow-[0_-5px_20px_rgba(0,0,0,0.8)] z-50 backdrop-blur-md`}>
 
-          {/* USER GRAPH BUTTON */}
-          <Link href="/user-graph" className="flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-bold bg-transparent text-slate-400 hover:text-white transition-all duration-300">
-            👥 User Graph
-          </Link>
+          {/* ── GROUPED: Users + HISAB ── */}
+          <div className="flex flex-row items-center gap-1 px-1 py-1 rounded-2xl bg-white/[0.04] border border-white/[0.07]">
+            {/* USERS */}
+            <button
+              onClick={() => setCurrentView('users')}
+              className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-bold transition-all duration-200
+                ${currentView === 'users'
+                  ? 'bg-cyan-500/20 text-cyan-300 shadow-[0_0_14px_rgba(34,211,238,0.55)] border border-cyan-500/40 -translate-y-0.5'
+                  : 'text-slate-400 hover:text-cyan-300 hover:bg-cyan-500/10 hover:shadow-[0_0_15px_rgba(34,211,238,0.8)] hover:-translate-y-0.5 border border-transparent'
+                }`}
+            >
+              👥 Users
+            </button>
 
-          {/* GALLERY BUTTON */}
-          <Link href="/gallery" className="flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-bold bg-transparent text-slate-400 hover:text-white transition-all duration-300">
-            🎨 Gallery
-          </Link>
+            {/* DIVIDER */}
+            <span className="w-px h-6 bg-white/10 shrink-0" />
 
-          {/* BACKUP BUTTON */}
+            {/* HISAB */}
+            <Link
+              href="/hisab"
+              className={`relative flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-bold transition-all duration-200
+                text-yellow-400/80 hover:text-yellow-300 hover:bg-yellow-500/10 hover:shadow-[0_0_15px_rgba(251,191,36,0.8)] hover:-translate-y-0.5 border border-transparent hover:border-yellow-500/30`}
+              title="Monthly Accounts"
+            >
+              🧾 Hisab
+              {hisabDotActive && (
+                <span className="absolute top-1.5 right-1.5 flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+                </span>
+              )}
+            </Link>
+          </div>
+
+          {/* ── OTHER NAV ITEMS ── */}
+          <button onClick={() => setCurrentView('workers')} className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold transition-all duration-200 ${currentView === 'workers' ? `${t.button} text-white shadow-lg -translate-y-0.5` : 'bg-transparent text-slate-400 hover:text-white'}`}>👷 Workers</button>
+          <button onClick={() => setCurrentView('expenses')} className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold transition-all duration-200 ${currentView === 'expenses' ? `${t.button} text-white shadow-lg -translate-y-0.5` : 'bg-transparent text-slate-400 hover:text-white'}`}>📉 Expenses</button>
+          <button onClick={() => setCurrentView('analytics')} className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold transition-all duration-200 ${currentView === 'analytics' ? `${t.button} text-white shadow-lg -translate-y-0.5` : 'bg-transparent text-slate-400 hover:text-white'}`}>📊 Graph</button>
+          <button onClick={() => { setAuthAction({ type: 'ACCESS_HQ' }); setShowAuthModal(true); }} className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold transition-all duration-200 ${currentView === 'financials' ? 'bg-purple-600 text-white shadow-lg -translate-y-0.5' : 'bg-transparent text-slate-400 hover:text-white'}`}>🔒 Financials</button>
+
+          {/* BACKUP */}
           <button
             onClick={handleManualBackup}
-            className="flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-bold bg-transparent text-slate-400 hover:text-white transition-all duration-300 animate-pulse-slow"
+            className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold bg-transparent text-slate-400 hover:text-white transition-all duration-200 animate-pulse-slow"
             title="Create Manual Backup"
           >
             ☁️ Backup
           </button>
 
-          {/* SETTINGS BUTTON */}
+          {/* SETTINGS */}
           <button
             onClick={() => setShowSettingsModal(true)}
-            className="flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-bold bg-transparent text-slate-400 hover:text-white transition-all duration-300"
+            className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold bg-transparent text-slate-400 hover:text-white transition-all duration-200"
             title="Settings"
           >
             ⚙️ Settings
@@ -1657,16 +1771,169 @@ export default function ClickDashboard() {
           onClose={() => setShowSettingsModal(false)}
         />
 
-        {/* AI CHAT BUTTON & WINDOW (FIXED BOTTOM RIGHT) */}
-        <div className="fixed bottom-4 right-4 z-[60] flex flex-col items-end gap-2">
-          {isChatOpen && (
-            <div className={`${t.panelBg} backdrop-blur-md border ${t.border} rounded-2xl shadow-2xl w-80 h-96 flex flex-col overflow-hidden animate-in slide-in-from-bottom-5 fade-in duration-300`}>
-                <div className={`p-3 border-b ${t.border} flex justify-between items-center bg-black/20`}><div className="flex items-center gap-2"><span className="text-2xl">🤖</span><span className={`font-bold ${t.textAccent} text-sm`}>Click AI</span></div><button onClick={() => setIsChatOpen(false)} className="text-slate-400 hover:text-white">✕</button></div>
-                <div className="flex-1 overflow-y-auto p-3 space-y-3 custom-scrollbar">{messages.map((m, i) => (<div key={i} className={`flex ${m.sender === 'user' ? 'justify-end' : 'justify-start'}`}><div className={`max-w-[85%] p-3 rounded-2xl text-xs leading-relaxed whitespace-pre-line ${m.sender === 'user' ? `${t.button} text-white rounded-br-none` : m.isSecure ? 'bg-emerald-900/80 border border-emerald-500 text-emerald-100 rounded-bl-none' : 'bg-white/10 text-slate-300 rounded-bl-none'}`}>{m.text}</div></div>))}<div ref={chatEndRef} /></div>
-                <div className="p-3 bg-black/30 border-t border-white/10"><div className="flex gap-2"><input type={awaitingAiAuth ? "password" : "text"} placeholder={awaitingAiAuth ? "PIN..." : "Ask..."} value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleAiSubmit()} className={`flex-1 bg-black/50 border ${awaitingAiAuth ? 'border-red-500' : 'border-slate-600'} rounded-full px-4 py-2 text-xs focus:outline-none focus:border-white text-white`}/><button onClick={handleAiSubmit} className={`w-8 h-8 ${t.button} rounded-full flex items-center justify-center text-white`}>➤</button></div></div>
+        {/* ── SMART MUNSHI PANEL (FIXED BOTTOM RIGHT) ── */}
+        {showMunshi && (
+          <div className="fixed bottom-[76px] right-4 z-[61] w-80 max-h-[78vh] flex flex-col bg-black/60 backdrop-blur-2xl border border-amber-700/40 rounded-2xl shadow-[0_0_40px_rgba(251,191,36,0.15)] overflow-hidden animate-in slide-in-from-bottom-4 fade-in duration-300">
+            {/* Header */}
+            <div className="p-3 border-b border-amber-800/30 flex justify-between items-center bg-gradient-to-r from-amber-950/60 to-orange-950/30 shrink-0">
+              <div className="flex items-center gap-2">
+                <span className={`text-xl ${munshiSearching ? 'animate-munshi-pulse' : ''}`}>📜</span>
+                <div>
+                  <div className="font-black text-amber-300 text-sm leading-none tracking-wide">Smart Munshi</div>
+                  <div className="flex items-center gap-1 mt-1">
+                    <span className="inline-flex items-center gap-0.5 bg-emerald-900/60 border border-emerald-500/40 text-emerald-400 text-[8px] font-bold uppercase tracking-[0.18em] px-1.5 py-0.5 rounded-full">
+                      <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse inline-block" />
+                      Current Date Mode Active
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <button onClick={() => { setShowMunshi(false); setMunshiQuery(''); setMunshiResult(null); }} className="text-amber-800 hover:text-amber-300 transition-colors text-sm font-bold">✕</button>
             </div>
-          )}
-          <button onClick={() => setIsChatOpen(!isChatOpen)} className={`w-14 h-14 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-full ${t.glow} flex items-center justify-center text-3xl shadow-lg border-2 border-white/20 hover:scale-110 transition-transform`}>🤖</button>
+
+            {/* Search Input */}
+            <div className="p-3 border-b border-amber-900/20 shrink-0">
+              <div className="relative">
+                <input
+                  autoFocus
+                  type="text"
+                  placeholder="Type name..."
+                  value={munshiQuery}
+                  onChange={(e) => setMunshiQuery(e.target.value)}
+                  className="w-full bg-black/50 border border-amber-800/40 rounded-xl px-4 py-2.5 text-sm text-white placeholder-amber-950 focus:outline-none focus:border-amber-500/70 font-mono tracking-wide"
+                />
+                {munshiSearching ? (
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
+                ) : munshiQuery ? (
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-amber-700 text-xs">🔍</span>
+                ) : null}
+              </div>
+            </div>
+
+            {/* Results Area */}
+            <div className="flex-1 overflow-y-auto p-3 custom-scrollbar space-y-3">
+              {/* Empty state */}
+              {!munshiQuery && (
+                <div className="text-center py-8 text-slate-600">
+                  <div className="text-5xl mb-3 opacity-60">🕵️</div>
+                  <div className="text-xs text-amber-900/80 font-mono">Kisi bhi guest ka naam likho</div>
+                  <div className="text-[10px] text-slate-700 mt-1">10 saal ki history scan ho gi</div>
+                </div>
+              )}
+
+              {/* No result */}
+              {munshiQuery && !munshiSearching && !munshiResult && (
+                <div className="text-center py-8">
+                  <div className="text-4xl mb-2 opacity-50">🫤</div>
+                  <div className="text-xs text-slate-600 font-mono">"{munshiQuery}" ka koi record nahi mila</div>
+                </div>
+              )}
+
+              {/* Digital Receipt */}
+              {munshiResult && (
+                <>
+                  {/* Receipt Card */}
+                  <div className="bg-gradient-to-b from-amber-950/40 to-black/40 border border-amber-800/30 rounded-xl p-4 relative overflow-hidden">
+                    {/* Top shimmer line */}
+                    <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-amber-500/60 to-transparent" />
+                    {/* Receipt dots */}
+                    <div className="absolute top-0 left-0 right-0 flex justify-between px-2">
+                      {Array.from({length: 20}).map((_, i) => <div key={i} className="w-0.5 h-1 bg-amber-900/40" />)}
+                    </div>
+
+                    <div className="text-center mb-3 mt-1">
+                      <div className="text-[9px] text-amber-800/60 uppercase tracking-[0.3em] font-mono">Guest Record</div>
+                      <div className="text-lg font-black text-amber-300 mt-0.5 tracking-wide">{munshiResult.name}</div>
+                    </div>
+
+                    {/* Stats Grid */}
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <div className="bg-black/40 rounded-lg p-2 text-center border border-amber-900/20">
+                        <div className="text-amber-400 text-xl font-black">{munshiResult.totalVisits}</div>
+                        <div className="text-[8px] text-emerald-600/80 uppercase tracking-wider">Today&apos;s Rows</div>
+                      </div>
+                      <div className="bg-black/40 rounded-lg p-2 text-center border border-emerald-900/20">
+                        <div className="text-emerald-400 text-base font-black">Rs {munshiResult.totalAmount.toLocaleString()}</div>
+                        <div className="text-[8px] text-emerald-600/80 uppercase tracking-wider">Today&apos;s Total</div>
+                      </div>
+                      <div className="bg-black/40 rounded-lg p-2 text-center border border-cyan-900/20">
+                        <div className="text-cyan-400 text-sm font-black">
+                          {munshiResult.commonCabin !== '--' ? `Cabin ${munshiResult.commonCabin}` : '--'}
+                        </div>
+                        <div className="text-[8px] text-slate-600 uppercase tracking-wider">Fav. Cabin</div>
+                      </div>
+                      <div className="bg-black/40 rounded-lg p-2 text-center border border-purple-900/20">
+                        <div className="text-purple-400 text-[10px] font-bold leading-tight">Rs {munshiResult.avgAmount.toLocaleString()}</div>
+                        <div className="text-[8px] text-slate-600 uppercase tracking-wider">Avg / Visit</div>
+                      </div>
+                    </div>
+
+                    {/* Date range */}
+                    <div className="mt-2.5 flex justify-between text-[8px] font-mono text-amber-900/60 border-t border-amber-900/20 pt-2">
+                      <span>First: {munshiResult.firstVisitDate}</span>
+                      <span>Last: {munshiResult.lastVisitDate}</span>
+                    </div>
+
+                    {/* Bottom dots */}
+                    <div className="absolute bottom-0 left-0 right-0 flex justify-between px-2">
+                      {Array.from({length: 20}).map((_, i) => <div key={i} className="w-0.5 h-1 bg-amber-900/40" />)}
+                    </div>
+                  </div>
+
+                  {/* Today's Entries List */}
+                  <div>
+                    <div className="text-[8px] text-emerald-700/70 uppercase tracking-[0.25em] mb-1.5 pl-0.5 font-mono">Today&apos;s Entries</div>
+                    <div className="space-y-1">
+                      {munshiResult.recentVisits.map((v, i) => (
+                        <div key={i} className="flex items-center justify-between bg-black/30 rounded-lg px-2.5 py-1.5 border border-white/[0.04] text-[10px] font-mono">
+                          <div className="text-slate-500">{v.date}</div>
+                          <div className="flex items-center gap-2">
+                            {v.cabinNumber && <span className="text-cyan-800">#{v.cabinNumber}</span>}
+                            <span className="text-emerald-500 font-bold">Rs {v.amount}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── DIGITAL JADUGAR — Single AI Munshi Icon (FIXED BOTTOM RIGHT) ── */}
+        <div className="fixed bottom-4 right-4 z-[60]">
+          <div className="relative w-16 h-16 group">
+
+            {/* Spinning gradient ring */}
+            <div
+              className="absolute inset-0 rounded-full animate-spin-ring pointer-events-none"
+              style={{ background: 'conic-gradient(from 0deg, transparent 0%, #00ffff 25%, #a855f7 50%, #3b82f6 75%, transparent 100%)' }}
+            />
+
+            {/* Inner mask — creates ring effect */}
+            <div className="absolute inset-[2px] rounded-full bg-black/80 pointer-events-none z-[1]" />
+
+            {/* Glass button */}
+            <button
+              onClick={() => setShowMunshi(!showMunshi)}
+              aria-label="AI Munshi — The Magic Search"
+              className={`absolute inset-[3px] rounded-full bg-white/10 backdrop-blur-md border border-white/15 flex items-center justify-center z-[2] transition-transform duration-200 group-hover:scale-105 ${munshiSearching ? 'animate-jadugar-glow' : 'animate-jadugar-glow'}`}
+            >
+              <Wand2
+                size={22}
+                className={`text-cyan-400 transition-all duration-200 group-hover:text-white ${munshiSearching ? 'animate-pulse' : ''}`}
+                style={{ filter: 'drop-shadow(0 0 6px rgba(0,255,255,0.9)) drop-shadow(0 0 12px rgba(139,0,255,0.6))' }}
+              />
+            </button>
+
+            {/* Tooltip */}
+            <div className="absolute bottom-full right-0 mb-3 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap z-[3]">
+              <div className="bg-black/90 border border-cyan-500/40 text-cyan-300 text-[9px] px-2.5 py-1.5 rounded-lg font-mono backdrop-blur-md shadow-xl tracking-wide">
+                ✨ AI Munshi — The Magic Search
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* LEFT SIDE PANEL - CAFE INVENTORY */}
@@ -1768,16 +2035,28 @@ export default function ClickDashboard() {
                   <h3 className={`font-bold ${t.textMain} mb-2`}>Section 2 Total</h3>
                   <p className={`text-2xl font-black ${t.textHighlight}`}>Rs {section2Total.toFixed(2)}</p>
                 </div>
-
-                <div className={`p-4 rounded-lg ${t.panelBg} border ${t.border} mb-4`}>
-                  <h3 className={`font-bold ${t.textMain} mb-2`}>Section 3 Total</h3>
-                  <p className={`text-2xl font-black ${t.textHighlight}`}>Rs {section3Total.toFixed(2)}</p>
-                </div>
               </div>
 
               <div className={`p-6 bg-gradient-to-r from-black/40 to-transparent border-t ${t.border} font-bold text-center relative`}>
-                <h3 className={`text-lg ${t.textAccent} mb-1`}>Grand Total</h3>
-                <p className={`text-4xl font-black ${t.textHighlight} drop-shadow-lg`}>Rs {grandTotal.toFixed(2)}</p>
+                {/* Gross Sale */}
+                <div className="mb-3">
+                  <p className={`text-xs uppercase tracking-widest ${t.textAccent} opacity-70 mb-0.5`}>Gross Sale</p>
+                  <p className={`text-2xl font-black ${t.textHighlight}`}>Rs {grandTotal.toLocaleString('en-PK', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</p>
+                </div>
+                {/* Inventory Expense */}
+                <div className="mb-3">
+                  <p className="text-xs uppercase tracking-widest text-red-400 opacity-80 mb-0.5">Inventory Expense</p>
+                  <p className="text-2xl font-black text-red-400 drop-shadow">- Rs {totalInventoryCost.toLocaleString('en-PK', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</p>
+                </div>
+                {/* Divider */}
+                <div className={`border-t ${t.border} my-2`} />
+                {/* Net Balance */}
+                <div>
+                  <p className={`text-xs uppercase tracking-widest mb-0.5 ${netBalance < 0 ? 'text-red-400' : 'text-yellow-400'} opacity-80`}>Net Balance</p>
+                  <p className={`text-4xl font-black drop-shadow-lg ${netBalance < 0 ? 'text-red-400 animate-pulse' : 'text-yellow-400'}`}>
+                    Rs {netBalance.toLocaleString('en-PK', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                  </p>
+                </div>
                 {/* Auto-save indicator */}
                 {showSaveIndicator && (
                   <div className="absolute -top-2 -right-2 flex items-center justify-center">
